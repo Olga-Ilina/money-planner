@@ -1,0 +1,20 @@
+/* «Сегодня» (src/ui/screens/Today.tsx): colour tokens only; every class starts with .today- */
+
+.today-new {
+  margin: 0 16px 28px;
+}
+
+.today-empty {
+  margin: 0;
+  padding: 12px 16px;
+  color: var(--label-2);
+}
+
+/* the check button at the end of a due row: a 44 pt target, a hollow tinted circle */
+.today-check {
+  color: var(--tint);
+}
+
+.today-check:active {
+  opacity: 0.5;
+}

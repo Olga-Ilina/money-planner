@@ -1,0 +1,29 @@
+/* Page of one account (src/ui/pages/AccountPage.tsx). Colour tokens only. */
+
+/* «Сейчас» takes the whole first row; the four figures it is made of sit two by two under it.
+   With «На сегодня» the two share the first row. */
+.account-page-stats:not(.account-page-stats-pair) .stat-grid > :first-child {
+  grid-column: 1 / -1;
+}
+
+.account-page-month {
+  margin: -8px 0 8px;
+}
+
+.account-page-edge,
+.account-page-none {
+  color: var(--label-2);
+}
+
+.account-page-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.account-page-running {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-2);
+}

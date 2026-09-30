@@ -1,0 +1,5 @@
+/* «Счета» — the root screen of the tab (src/ui/screens/Accounts.tsx). Colour tokens only. */
+
+.accounts-actions {
+  margin: 0 16px 28px;
+}

@@ -1,0 +1,23 @@
+/* «О приложении» (AboutPage.tsx) */
+
+.about-text {
+  margin: 0;
+  padding: 11px 16px;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.about-text + .about-text {
+  padding-top: 0;
+}
+
+.about-steps {
+  margin: 0;
+  padding: 11px 16px 11px 36px;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.about-steps li + li {
+  margin-top: 6px;
+}

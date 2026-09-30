@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.internal/
+.DS_Store
+*.local
+coverage/
+tools/.venv/
+.worktrees/

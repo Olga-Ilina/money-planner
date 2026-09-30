@@ -1,0 +1,12 @@
+/* The «Заменить данные в приложении» sheet (ReplaceDataSheet.tsx): counts in the file, next to what is here now */
+
+.replace-now {
+  margin-right: 12px;
+  font-size: 15px;
+  color: var(--label-2);
+}
+
+/* the notes and the overrides lists follow the buttons */
+.replace-actions {
+  margin-bottom: 28px;
+}

@@ -1,0 +1,16 @@
+/* Page «Кредитка» (src/ui/pages/CreditPage.tsx). Colour tokens only. */
+
+/* «Текущая»: the statement whose period includes today */
+.credit-page-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 8px;
+  border-radius: 9px;
+  background: var(--fill);
+  color: var(--tint);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  vertical-align: 2px;
+  white-space: nowrap;
+}

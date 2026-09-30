@@ -1,0 +1,1479 @@
+/* iOS look (Apple HIG): system font, inset grouped lists, translucent bars, light and dark theme.
+   No external fonts or icons (CSP): icons are inline SVG. Tokens below are the only colours. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f2f2f7;
+  --card: #ffffff;
+  --card-2: #f2f2f7;
+  --separator: rgba(60, 60, 67, 0.29);
+  --label: #000000;
+  --label-2: rgba(60, 60, 67, 0.6);
+  --label-3: rgba(60, 60, 67, 0.3);
+  --tint: #4f46e5;
+  --green: #34c759;
+  /* green for TEXT (income amounts): the bright --green is for fills and icons, 2.2:1 on white */
+  --green-text: #1f7a35;
+  --red: #ff3b30;
+  --orange: #ff9500;
+  /* red and orange for TEXT (negative amounts, errors, «Удалить», warnings): the bright ones above are for
+     fills and icons (3.6:1 and 2.2:1 on white); these reach 5:1 on white, 4.7:1 on the grey background */
+  --red-text: #d70015;
+  --orange-text: #c93400;
+  --teal: #0e8fa8;
+  --fill: rgba(120, 120, 128, 0.12);
+
+  /* derived */
+  --bar: rgba(249, 249, 249, 0.82);
+  --pressed: #e5e5ea;
+  --sheet-bg: #f2f2f7;
+  --sheet-card: #ffffff;
+  --segment-selected: #ffffff;
+  --key-bg: rgba(120, 120, 128, 0.16);
+  --key-pressed: rgba(120, 120, 128, 0.36);
+  --switch-off: rgba(120, 120, 128, 0.16);
+  --toast-bg: rgba(44, 44, 46, 0.96);
+  --tint-on-dark: #a19cff;
+  /* behind white text (a filled button, a chosen chip): 4.5:1 or more in both themes */
+  --tint-fill: #4f46e5;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+
+  --font: -apple-system, system-ui, 'SF Pro Text', sans-serif;
+  --tabbar-h: 49px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --card: #1c1c1e;
+    --card-2: #2c2c2e;
+    --separator: rgba(84, 84, 88, 0.6);
+    --label: #ffffff;
+    --label-2: rgba(235, 235, 245, 0.6);
+    --label-3: rgba(235, 235, 245, 0.3);
+    --tint: #8b85ff;
+    --green: #30d158;
+    --green-text: #30d158;
+    --red: #ff453a;
+    --orange: #ff9f0a;
+    --red-text: #ff453a;
+    --orange-text: #ff9f0a;
+    --teal: #40c8e0;
+    --fill: rgba(120, 120, 128, 0.24);
+
+    --bar: rgba(22, 22, 23, 0.82);
+    --pressed: #2c2c2e;
+    --sheet-bg: #1c1c1e;
+    --sheet-card: #2c2c2e;
+    --segment-selected: #636366;
+    --key-bg: rgba(120, 120, 128, 0.32);
+    --key-pressed: rgba(120, 120, 128, 0.56);
+    --switch-off: rgba(120, 120, 128, 0.32);
+    --toast-bg: rgba(58, 58, 60, 0.96);
+    --tint-fill: #5e5ce6;
+    --shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* ---------- base ---------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  background: var(--bg);
+}
+
+/* a sheet left open in the app hidden behind the lock must not stop the PIN screen from scrolling
+   (landscape: the keypad is taller than the screen) */
+html.modal-open:not(:has(.lock-screen)),
+html.modal-open:not(:has(.lock-screen)) body {
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--label);
+  font-family: var(--font);
+  font-size: 17px;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  max-width: 520px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* the app is in the background (src/ui/session.ts): nothing of it is drawn, only an opaque --bg layer,
+   so the iOS app switcher snapshot shows no data. Removed on return, after the lock decision. */
+html.privacy-cover #app {
+  visibility: hidden;
+}
+
+html.privacy-cover body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  background: var(--bg);
+}
+
+button {
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: 17px; /* 16px or more: iOS does not zoom in on focus */
+  letter-spacing: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--tint);
+  outline-offset: 2px;
+}
+
+.icon {
+  display: block;
+  flex: none;
+}
+
+.money {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tone-default {
+  color: var(--label);
+}
+.tone-muted {
+  color: var(--label-2);
+}
+.tone-green {
+  color: var(--green-text);
+}
+.tone-red {
+  color: var(--red-text);
+}
+.tone-orange {
+  color: var(--orange-text);
+}
+
+/* Read by screen readers, not shown: out of the flow, 1 px, clipped. Its nearest positioned ancestor must be
+   inside any horizontal scroller (give the scroller `position: relative`), or the text widens the page. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- page ---------- */
+
+.page-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: grid;
+  /* the sides keep their full width; the title takes what is left (ellipsised) and stays centred
+     while the sides fit in the space around it */
+  grid-template-columns: minmax(max-content, 1fr) minmax(0, max-content) minmax(max-content, 1fr);
+  align-items: center;
+  min-height: calc(44px + var(--safe-top));
+  padding: var(--safe-top) 8px 0;
+  transition: background-color 0.2s, box-shadow 0.2s;
+}
+
+.page-bar-compact {
+  background: var(--bar);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: 0 0.5px 0 var(--separator);
+}
+
+.page-bar-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.page-bar-right {
+  justify-content: flex-end;
+  color: var(--tint);
+}
+
+.page-bar-title {
+  min-width: 0;
+  font-weight: 600;
+  text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.page-bar-compact .page-bar-title {
+  opacity: 1;
+}
+
+.nav-back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-left: -4px;
+  padding-right: 8px;
+  color: var(--tint);
+}
+
+.nav-back-title {
+  max-width: 34vw;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.page-head {
+  padding: 0 16px 12px;
+}
+
+.large-title {
+  margin: 0;
+  font-size: 34px;
+  line-height: 41px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  overflow-wrap: anywhere;
+}
+
+.page-subtitle {
+  margin: 2px 0 0;
+  font-size: 15px;
+  color: var(--label-2);
+}
+
+.page-body {
+  padding-bottom: 24px;
+}
+
+/* ---------- inset grouped list ---------- */
+
+.section {
+  margin: 0 16px 28px;
+}
+
+.section-header {
+  margin: 0;
+  padding: 0 16px 7px;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+  color: var(--label-2);
+}
+
+.section-card {
+  background: var(--card);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.section-footer {
+  margin: 0;
+  padding: 7px 16px 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-2);
+}
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 16px;
+  background: var(--card);
+  text-align: left;
+}
+
+.section-card > :is(.row, .field) + :is(.row, .field)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  border-top: 0.5px solid var(--separator);
+}
+
+.section-card > :is(.row, .field) + .row-with-icon::before {
+  left: 58px;
+}
+
+.row-button:active {
+  background: var(--pressed);
+}
+
+.row-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--tint);
+  color: #ffffff;
+}
+
+/* Row iconTone */
+.row-icon-green {
+  background: var(--green);
+}
+
+.row-icon-teal {
+  background: var(--teal);
+}
+
+.row-icon-orange {
+  background: var(--orange);
+}
+
+.row-icon-red {
+  background: var(--red);
+}
+
+.row-icon-muted {
+  background: var(--card-2);
+  color: var(--label-2);
+}
+
+.row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.row-title {
+  overflow-wrap: anywhere;
+}
+
+.row-subtitle {
+  font-size: 15px;
+  color: var(--label-2);
+  overflow-wrap: anywhere;
+}
+
+.row-bar {
+  display: block;
+  margin-top: 6px;
+}
+
+.row-extra {
+  display: block;
+  margin-top: 6px;
+}
+
+/* the same 6 px between a bar and the text under it (the flex gap adds the other 2); «~», not «+»: a hidden
+   separator of a row button sits between them */
+.row-bar ~ .row-extra {
+  margin-top: 4px;
+}
+
+.row-value {
+  flex: none;
+  max-width: 55%;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.row-chevron {
+  flex: none;
+  margin-right: -4px;
+  color: var(--label-3);
+}
+
+.row-destructive .row-title {
+  color: var(--red-text);
+}
+
+/* a row with a trailing control: the row's button and the control sit side by side */
+.row-split {
+  padding: 0 16px 0 0;
+}
+
+.row-press {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 44px;
+  align-self: stretch;
+  padding: 11px 0 11px 16px;
+  text-align: left;
+}
+
+.row-press:active {
+  background: var(--pressed);
+}
+
+.row-trailing {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-right: -6px;
+}
+
+/* ---------- buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  text-align: center;
+}
+
+.btn-filled {
+  min-height: 50px;
+  padding: 0 20px;
+  border-radius: 14px;
+  background: var(--tint-fill);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.btn-plain {
+  color: var(--tint);
+}
+
+.btn-destructive {
+  color: var(--red-text);
+}
+
+.btn-full {
+  display: flex;
+  width: 100%;
+}
+
+.btn-destructive.btn-full,
+.btn-plain.btn-full {
+  min-height: 50px;
+  border-radius: 14px;
+  background: var(--card);
+}
+
+.btn:active:not(:disabled) {
+  opacity: 0.7;
+}
+
+.btn:disabled {
+  opacity: 0.35;
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 22px;
+  color: var(--tint);
+}
+
+.icon-button:disabled {
+  color: var(--label-3);
+}
+
+.link-button {
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--tint);
+}
+
+/* ---------- segmented control and chips ---------- */
+
+.segmented {
+  display: flex;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--fill);
+}
+
+.segment {
+  flex: 1 1 0;
+  display: block;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color 0.2s;
+}
+
+/* four options (Все / Траты / Доходы / Не оплачено): smaller type, widths follow the labels */
+.segmented-4 .segment {
+  flex: 1 1 auto;
+  padding: 0 6px;
+  font-size: 13px;
+}
+
+.segment-selected {
+  background: var(--segment-selected);
+  font-weight: 600;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 22px;
+  background: var(--fill);
+  font-size: 15px;
+}
+
+.chip-selected {
+  background: var(--tint-fill);
+  color: #ffffff;
+}
+
+/* ---------- form fields ---------- */
+
+.field {
+  position: relative;
+  background: var(--card);
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 16px;
+}
+
+.field-label {
+  flex: none;
+  max-width: 55%;
+  padding: 11px 0;
+}
+
+.field-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 11px 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--label);
+  text-align: right;
+  text-align-last: right;
+}
+
+.field-input::placeholder {
+  color: var(--label-3);
+}
+
+.field-amount,
+.field-number {
+  font-variant-numeric: tabular-nums;
+}
+
+.field-select {
+  -webkit-appearance: none;
+  appearance: none;
+  color: var(--label-2);
+}
+
+.field-date {
+  -webkit-appearance: none;
+  appearance: none;
+  display: flex;
+  justify-content: flex-end;
+  color: var(--tint);
+}
+
+.field-date::-webkit-date-and-time-value {
+  text-align: right;
+}
+
+.field-stacked .field-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding-top: 8px;
+}
+
+.field-stacked .field-label {
+  max-width: none;
+  padding: 0;
+  font-size: 13px;
+  color: var(--label-2);
+}
+
+.field-stacked .field-input {
+  text-align: left;
+  text-align-last: left;
+}
+
+.field-error {
+  padding: 0 16px 10px;
+  font-size: 13px;
+  color: var(--red-text);
+}
+
+/* the `hint` of a field: a short note under it, inside its card */
+.field-hint {
+  padding: 0 16px 10px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-2);
+}
+
+.switch {
+  position: relative;
+  flex: none;
+  margin-left: auto;
+  width: 51px;
+  height: 31px;
+  border-radius: 16px;
+  background: var(--switch-off);
+  transition: background-color 0.2s;
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  inset: -7px -4px; /* 44 px touch target */
+}
+
+.switch-on {
+  background: var(--green);
+}
+
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15), 0 3px 1px rgba(0, 0, 0, 0.06);
+  transition: transform 0.2s;
+}
+
+.switch-on .switch-knob {
+  transform: translateX(20px);
+}
+
+.switch:disabled {
+  opacity: 0.4;
+}
+
+/* ---------- sheet and confirm ---------- */
+
+.sheet-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  animation: fade-in 0.25s ease-out;
+}
+
+.sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 520px;
+  max-height: 92dvh;
+  border-radius: 12px 12px 0 0;
+  background: var(--sheet-bg);
+  box-shadow: 0 -1px 12px rgba(0, 0, 0, 0.12);
+  outline: none;
+  transition: transform 0.2s;
+  animation: sheet-in 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.sheet .section-card,
+.sheet .row,
+.sheet .field,
+.sheet .banner,
+.sheet .btn-full:not(.btn-filled) {
+  background: var(--sheet-card);
+}
+
+.sheet-header {
+  flex: none;
+  padding-top: 6px;
+  touch-action: none;
+  cursor: grab;
+}
+
+.sheet-grabber {
+  width: 36px;
+  height: 5px;
+  margin: 0 auto;
+  border-radius: 3px;
+  background: var(--label-3);
+}
+
+.sheet-bar {
+  display: grid;
+  /* as .page-bar: the side buttons never overlap the title */
+  grid-template-columns: minmax(max-content, 1fr) minmax(0, max-content) minmax(max-content, 1fr);
+  align-items: center;
+  min-height: 44px;
+  padding: 0 8px;
+}
+
+.sheet-bar-side {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.sheet-bar-right {
+  justify-content: flex-end;
+}
+
+.sheet-bar-right .btn-plain {
+  font-weight: 600;
+}
+
+.sheet-title {
+  min-width: 0;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 0 calc(16px + var(--safe-bottom));
+}
+
+.sheet-text {
+  margin: 0 16px 20px;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--label-2);
+}
+
+.sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 16px;
+}
+
+.sheet-closing .sheet,
+.sheet-closing .confirm {
+  animation: sheet-out 0.24s ease-in forwards;
+}
+
+.sheet-closing .sheet-backdrop {
+  animation: fade-out 0.24s ease-in forwards;
+}
+
+.confirm {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 520px;
+  padding: 0 8px calc(8px + var(--safe-bottom));
+  outline: none;
+  animation: sheet-in 0.32s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.confirm-group {
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--sheet-card);
+}
+
+.confirm-text {
+  padding: 14px 16px;
+  text-align: center;
+  border-bottom: 0.5px solid var(--separator);
+}
+
+.confirm-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label-2);
+}
+
+.confirm-message {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--label-2);
+}
+
+.confirm-button {
+  width: 100%;
+  min-height: 57px;
+  font-size: 20px;
+  color: var(--tint);
+  background: var(--sheet-card);
+}
+
+.confirm-destructive {
+  color: var(--red-text);
+}
+
+.confirm-cancel {
+  border-radius: 14px;
+  font-weight: 600;
+}
+
+.confirm-button:active {
+  background: var(--pressed);
+}
+
+/* ---------- month picker, banner, empty state, progress ---------- */
+
+.month-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 8px;
+}
+
+.month-picker-label {
+  flex: 1;
+  font-weight: 600;
+  text-align: center;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px 16px;
+  padding: 10px 8px 10px 14px;
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.banner-icon {
+  flex: none;
+  color: var(--tint);
+}
+
+.banner-warning .banner-icon {
+  color: var(--orange);
+}
+
+.banner-error .banner-icon {
+  color: var(--red);
+}
+
+.banner-success .banner-icon {
+  color: var(--green);
+}
+
+.banner-text {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.banner-action {
+  flex: none;
+  min-height: 44px;
+  padding: 0 8px;
+  color: var(--tint);
+  font-weight: 600;
+}
+
+.banner-action:disabled {
+  color: var(--label-3);
+}
+
+.banner-close {
+  flex: none;
+  color: var(--label-2);
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 32px;
+  text-align: center;
+  color: var(--label-2);
+}
+
+.empty-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--label);
+}
+
+.empty-text {
+  margin: 0;
+  max-width: 30em;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.progress {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--fill);
+}
+
+.progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--tint);
+  transition: width 0.3s;
+}
+
+.progress-fill.tone-green {
+  background: var(--green);
+}
+
+.progress-fill.tone-red {
+  background: var(--red);
+}
+
+.progress-fill.tone-orange {
+  background: var(--orange);
+}
+
+/* ---------- overlay root (src/ui/kit/Overlay.tsx) ---------- */
+
+.overlay-slot {
+  display: contents;
+}
+
+/* ---------- summary cards ---------- */
+
+.stat-grid {
+  display: grid;
+  gap: 8px;
+  margin: 0 16px 28px;
+  /* three per row at 440 pt; two (and the third below) at 375 pt */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 124px), 1fr));
+}
+
+.stat-grid-2 {
+  grid-template-columns: repeat(auto-fit, minmax(max(124px, calc((100% - 8px) / 2)), 1fr));
+}
+
+.stat-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--card);
+  text-align: left;
+}
+
+/* the › sits beside the label, so the amount keeps the full width */
+.stat-card-button .stat-label {
+  padding-right: 14px;
+}
+
+.stat-card-button:active {
+  background: var(--pressed);
+}
+
+.stat-label {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-2);
+}
+
+.stat-value {
+  font-size: 16px;
+  line-height: 21px;
+  font-weight: 600;
+}
+
+.stat-sub {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--label-2);
+  overflow-wrap: anywhere;
+}
+
+.stat-chevron {
+  position: absolute;
+  top: 12px;
+  right: 7px;
+  color: var(--label-3);
+}
+
+/* ---------- toast ---------- */
+
+.toast-host {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 12px);
+  z-index: 110; /* above sheets (100): «Отменить» stays reachable */
+  display: flex;
+  justify-content: center;
+  padding: 0 16px;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 488px;
+  min-height: 48px;
+  padding: 2px 6px 2px 16px;
+  border-radius: 14px;
+  background: var(--toast-bg);
+  color: #ffffff;
+  font-size: 15px;
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  animation: toast-in 0.25s ease-out;
+}
+
+.toast-text {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 0;
+}
+
+.toast-button {
+  flex: none;
+  min-height: 44px;
+  padding: 0 10px;
+  color: var(--tint-on-dark);
+  font-weight: 600;
+}
+
+/* ---------- PIN screens ---------- */
+
+.lock-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 100dvh;
+  padding: calc(var(--safe-top) + 24px) 24px calc(var(--safe-bottom) + 24px);
+  background: var(--bg);
+}
+
+.lock-screen > .banner {
+  width: 100%;
+  max-width: 360px;
+  margin: 0;
+}
+
+.pinpad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  width: 100%;
+  max-width: 320px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.pinpad-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  color: var(--label-2);
+}
+
+.pinpad-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--label);
+}
+
+.pinpad-message {
+  min-height: 20px;
+  margin: 0;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--label-2);
+}
+
+.pinpad-message-error {
+  color: var(--red-text);
+}
+
+.pin-dots {
+  display: flex;
+  gap: 22px;
+  margin-top: 6px;
+}
+
+.pin-dot {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--label);
+  border-radius: 50%;
+  transition: background-color 0.1s;
+}
+
+.pin-dot-filled {
+  background: var(--label);
+}
+
+.shake {
+  animation: shake 0.42s ease-in-out;
+}
+
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 78px);
+  gap: 16px 24px;
+  justify-content: center;
+}
+
+.key {
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  background: var(--key-bg);
+  font-size: 34px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 0.15s;
+}
+
+.key:active:not(:disabled) {
+  background: var(--key-pressed);
+  transition: none;
+}
+
+.key:disabled {
+  opacity: 0.35;
+}
+
+.key-delete {
+  background: none;
+  font-size: 17px;
+}
+
+.key-delete:active:not(:disabled) {
+  background: none;
+  opacity: 0.6;
+}
+
+.key-spacer {
+  width: 78px;
+}
+
+.pinpad-footer {
+  text-align: center;
+}
+
+/* a PinPad inside a Page (the «PIN» settings page): under the page title, no lock icon */
+.pinpad-in-page {
+  margin: 8px auto 24px;
+}
+
+.pin-note {
+  max-width: 280px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-2);
+}
+
+@media (max-height: 700px) {
+  .pinpad {
+    gap: 20px;
+  }
+  .keypad {
+    grid-template-columns: repeat(3, 70px);
+    gap: 12px 22px;
+  }
+  .key,
+  .key-spacer {
+    width: 70px;
+    height: 70px;
+  }
+}
+
+/* ---------- app shell ---------- */
+
+.splash {
+  min-height: 100dvh;
+}
+
+.onboarding {
+  min-height: 100dvh;
+  padding-bottom: var(--safe-bottom);
+}
+
+.tab-content {
+  min-height: 100dvh;
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 16px);
+}
+
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  padding-bottom: var(--safe-bottom);
+  background: var(--bar);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-top: 0.5px solid var(--separator);
+}
+
+.tabbar-inner {
+  display: flex;
+  max-width: 520px;
+  height: var(--tabbar-h);
+  margin: 0 auto;
+  padding: 0 var(--safe-right) 0 var(--safe-left);
+}
+
+.tab {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  padding-top: 3px;
+  color: var(--label-2);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.tab-active {
+  color: var(--tint);
+}
+
+.tab-label {
+  line-height: 12px;
+}
+
+.update-banner {
+  position: fixed;
+  top: calc(var(--safe-top) + 8px);
+  left: 0;
+  right: 0;
+  z-index: 120;
+  display: flex;
+  justify-content: center;
+  padding: 0 8px;
+  pointer-events: none;
+}
+
+.update-banner .banner {
+  width: 100%;
+  max-width: 504px;
+  margin: 0;
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+}
+
+.start-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 100dvh;
+  padding: calc(var(--safe-top) + 24px) 24px calc(var(--safe-bottom) + 24px);
+  text-align: center;
+}
+
+.start-error-icon {
+  color: var(--orange);
+}
+
+.start-error-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.start-error-text {
+  max-width: 360px;
+  margin: 0 0 12px;
+  color: var(--label-2);
+}
+
+.start-error-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 360px;
+}
+
+/* ---------- motion ---------- */
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes sheet-out {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  15% {
+    transform: translateX(-12px);
+  }
+  30% {
+    transform: translateX(10px);
+  }
+  45% {
+    transform: translateX(-8px);
+  }
+  60% {
+    transform: translateX(6px);
+  }
+  75% {
+    transform: translateX(-3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,42 @@
+/* «Новая операция» (src/ui/sheets/OperationForm.tsx): colour tokens only; every class starts with .opform- */
+
+.opform-duplicate {
+  scroll-margin-top: 8px;
+}
+
+/* the amount is the first thing to type: large, like a calculator display */
+.opform-amount .section {
+  margin-bottom: 16px;
+}
+
+.opform-amount .field-row {
+  min-height: 64px;
+}
+
+.opform-amount .field-input {
+  min-height: 64px;
+  font-size: 34px;
+  line-height: 41px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.opform-kind {
+  margin: 0 16px 20px;
+}
+
+.opform-categories {
+  margin: 0 16px 24px;
+}
+
+.opform-caption {
+  margin: 0;
+  padding: 0 16px 7px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-2);
+}
+
+.opform-delete {
+  margin: 0 16px;
+}

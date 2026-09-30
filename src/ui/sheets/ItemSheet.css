@@ -1,0 +1,35 @@
+/* The item card (ItemSheet.tsx). Colour tokens only; every class starts with .item-sheet- */
+
+.item-sheet-head {
+  padding: 4px 24px 20px;
+  text-align: center;
+}
+
+.item-sheet-amount {
+  margin: 0;
+  font-size: 34px;
+  line-height: 41px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.item-sheet-name {
+  margin: 4px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.item-sheet-meta {
+  margin: 2px 0 0;
+  font-size: 15px;
+  color: var(--label-2);
+}
+
+.item-sheet-actions {
+  margin-bottom: 28px;
+}
+
+.item-sheet-action {
+  color: var(--tint);
+}

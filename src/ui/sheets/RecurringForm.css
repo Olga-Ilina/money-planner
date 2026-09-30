@@ -1,0 +1,122 @@
+/* RecurringForm: the kind switch and the grid of the 12 month marks. Tokens only. */
+
+.recurring-form-kind {
+  margin: 0 16px 20px;
+}
+
+/* 3 columns; each cell is the month (tap: ✓ / clear) with a 44 px «Сумма за …» button in its corner */
+.recurring-form-marks {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px;
+}
+
+/* 375 pt: two columns, so an amount like «1 234,56 €» still fits */
+@media (max-width: 400px) {
+  .recurring-form-marks {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.recurring-form-mark {
+  position: relative;
+  min-width: 0;
+  border-radius: 10px;
+  background: var(--fill);
+}
+
+.recurring-form-mark-set {
+  background: color-mix(in srgb, var(--green) 18%, transparent);
+}
+
+.recurring-form-mark-editing {
+  box-shadow: inset 0 0 0 2px var(--tint);
+}
+
+.recurring-form-mark-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-height: 64px;
+  padding: 12px 10px 10px;
+  border-radius: 10px;
+  text-align: left;
+}
+
+.recurring-form-mark-toggle:active,
+.recurring-form-mark-edit:active {
+  background: var(--pressed);
+}
+
+.recurring-form-mark-month {
+  /* room for the edit button in the corner */
+  margin-right: 30px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.recurring-form-mark-value {
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--label-3);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.recurring-form-mark-set .recurring-form-mark-value {
+  color: var(--green-text);
+}
+
+/* an EMPTY month without a payment (by the rhythm and the dates): pale, still tappable; a marked month is never pale */
+.recurring-form-mark-off:not(.recurring-form-mark-set) {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--separator);
+}
+
+.recurring-form-mark-off:not(.recurring-form-mark-set) .recurring-form-mark-month {
+  color: var(--label-3);
+}
+
+.recurring-form-mark-off:not(.recurring-form-mark-set).recurring-form-mark-editing {
+  box-shadow: inset 0 0 0 2px var(--tint);
+}
+
+.recurring-form-mark-edit {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 0 10px 0 10px;
+  color: var(--tint);
+}
+
+.recurring-form-editor {
+  position: relative;
+}
+
+.recurring-form-editor::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  border-top: 0.5px solid var(--separator);
+}
+
+.recurring-form-editor-done {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 4px 4px;
+}

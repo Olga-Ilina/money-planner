@@ -1,0 +1,50 @@
+/* «Лента» (Feed.tsx). Colour tokens only; every class starts with .feed- */
+
+.feed-month {
+  margin: -4px 0 8px;
+}
+
+.feed-filter {
+  margin: 0 16px 16px;
+}
+
+.feed-struck {
+  text-decoration: line-through;
+  color: var(--label-2);
+}
+
+.feed-badge {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  color: var(--orange-text);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  vertical-align: 2px;
+}
+
+.feed-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.feed-amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.feed-check {
+  color: var(--green);
+}
+
+.feed-caption {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--label-2);
+}

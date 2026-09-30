@@ -1,0 +1,13 @@
+/* PurchasesPage: the small line under a purchase (saved of the cost, «Хватит ли денег»). Tokens only. */
+
+.purchases-line {
+  display: block;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-2);
+}
+
+.purchases-status {
+  font-weight: 600;
+  white-space: nowrap;
+}

@@ -1,0 +1,6 @@
+/* «Счета и кредитка» (AccountsSettingsPage.tsx). styles.css loads after this file: two classes beat .sheet-text */
+
+/* why an account cannot be deleted, under the (disabled) delete button */
+.accounts-settings-note.sheet-text {
+  margin-top: 8px;
+}

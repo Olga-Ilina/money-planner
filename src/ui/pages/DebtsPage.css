@@ -1,0 +1,18 @@
+/* DebtsPage: the small lines under a debt (paid of the total, the next payment). Tokens only. */
+
+.debts-line {
+  display: block;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-2);
+}
+
+.debts-line.tone-orange {
+  color: var(--orange-text);
+  font-weight: 600;
+}
+
+.debts-status {
+  font-weight: 600;
+  white-space: nowrap;
+}

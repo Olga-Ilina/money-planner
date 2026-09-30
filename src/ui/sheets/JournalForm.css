@@ -1,0 +1,9 @@
+/* The journal form (JournalForm.tsx). Colour tokens only; every class starts with .journal-form- */
+
+.journal-form-kind {
+  margin: 0 16px 20px;
+}
+
+.journal-form-delete {
+  margin-top: -4px;
+}

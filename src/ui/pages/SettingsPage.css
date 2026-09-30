@@ -1,0 +1,16 @@
+/* «Настройки» (SettingsPage.tsx). styles.css loads after this file: two classes beat its .field-input */
+
+/* «Учёт с  Октябрь 2026»: the month select takes the room, the year one is just wide enough for 4 digits */
+.settings-month.field-input {
+  flex: 1 1 auto;
+}
+
+.settings-year.field-input {
+  flex: 0 0 auto;
+  width: 3.2em;
+}
+
+/* a new accounting year being chosen: what falls outside it, «Сохранить» / «Отмена», under its card */
+.settings-year-change {
+  margin: -12px 0 28px;
+}
