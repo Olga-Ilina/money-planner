@@ -15,7 +15,7 @@ import { XLSX_MIME, pickFile } from '../share';
 import { appData } from '../state';
 import { monthRange } from './usageText';
 
-const XLSX_ACCEPT = `.xlsx,${XLSX_MIME}`;
+export const XLSX_ACCEPT = `.xlsx,${XLSX_MIME}`;
 
 /** A file that has been read and is waiting for the user's choice. */
 export interface PendingReplace {
@@ -26,18 +26,18 @@ export interface PendingReplace {
   overrides: string[];
 }
 
-export type ReadFile = (buf: ArrayBuffer) => Promise<PendingReplace>;
+export type ReadFile<T extends PendingReplace = PendingReplace> = (buf: ArrayBuffer) => Promise<T>;
 
-/** Picking and reading a file; `pending` is the result (null while there is none). */
-export function usePickedFile() {
+/** Picking and reading a file; `pending` is the result (null while there is none), as `read` gave it. */
+export function usePickedFile<T extends PendingReplace = PendingReplace>() {
   const [reading, setReading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState<PendingReplace | null>(null);
+  const [pending, setPending] = useState<T | null>(null);
   // a fresh sheet for every file read
   const [opened, setOpened] = useState(0);
 
   /** Call straight from the tap: Safari opens the picker only then. */
-  const pick = (read: ReadFile) => {
+  const pick = (read: ReadFile<T>) => {
     if (reading) return;
     const picked = pickFile(XLSX_ACCEPT); // rejects with «Файл больше 20 МБ» for a file that is too big
     void (async () => {
@@ -79,9 +79,15 @@ export interface ReplaceDataSheetProps {
   onClose: () => void;
   /** Called once the new data is saved and shown. */
   onReplaced: () => void;
+  /** How the data is replaced (default actions.replaceData; «Забрать с Mac» keeps the data it replaces first). */
+  replace?: (next: Data) => Promise<void>;
+  /** The line under the counts (default: the file replaces the data, not undoable). */
+  note?: string;
 }
 
-export function ReplaceDataSheet({ pending, onClose, onReplaced }: ReplaceDataSheetProps) {
+const NOT_UNDOABLE = 'Сейчас в приложении другие данные. Файл заменит их, это нельзя отменить.';
+
+export function ReplaceDataSheet({ pending, onClose, onReplaced, replace: replaceWith = actions.replaceData, note = NOT_UNDOABLE }: ReplaceDataSheetProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -107,7 +113,7 @@ export function ReplaceDataSheet({ pending, onClose, onReplaced }: ReplaceDataSh
     setBusy(true);
     setError(null);
     try {
-      await actions.replaceData(pending.data);
+      await replaceWith(pending.data);
     } catch (e) {
       setError(ioErrorMessage(e));
       setBusy(false);
@@ -155,7 +161,7 @@ export function ReplaceDataSheet({ pending, onClose, onReplaced }: ReplaceDataSh
           ))}
         </Section>
       )}
-      <p class="sheet-text">Сейчас в приложении другие данные. Файл заменит их, это нельзя отменить.</p>
+      <p class="sheet-text">{note}</p>
       {remarks && <p class="sheet-text">{`${remarks[0]?.toUpperCase()}${remarks.slice(1)} — список ниже.`}</p>}
       {error && <Banner tone="error">{error}</Banner>}
       <div class="sheet-actions replace-actions">

@@ -26,16 +26,21 @@ export const loadTrackerImport = () => load(() => import('../io/importTracker'))
 export const loadBackup = () => load(() => import('../io/backup'));
 /** src/io/reports: monthReport(data, ym), yearReport(data), accountsReport(data, today, ym), forecastReport(data) → {filename, buffer}. */
 export const loadReports = () => load(() => import('../io/reports'));
+/**
+ * src/io/sync (the iCloud Drive sync with the Mac; small, no ExcelJS): formatStamp, parseStamp, readStamp(buf),
+ * newSyncId(), stampTime(date), dataHash(data); throw SyncError.
+ */
+export const loadSync = () => load(() => import('../io/sync'));
 
 // matched by name: importing the classes would pull the I/O modules into the main chunk
 const USER_FACING = new Set([
-  'TrackerImportError', 'BackupError', 'StoreError', 'ModuleLoadError', 'DataChangedError', 'FileTooLargeError',
+  'TrackerImportError', 'BackupError', 'StoreError', 'ModuleLoadError', 'DataChangedError', 'FileTooLargeError', 'SyncError',
 ]);
 
 /**
  * The message to show for a failed import/export/save: the error's own (Russian) text for the errors
  * meant for the user (TrackerImportError, BackupError, StoreError, ModuleLoadError, DataChangedError,
- * FileTooLargeError), otherwise the generic one.
+ * FileTooLargeError, SyncError), otherwise the generic one.
  */
 export function ioErrorMessage(e: unknown): string {
   return e instanceof Error && USER_FACING.has(e.name) && e.message ? e.message : GENERIC_ERROR;

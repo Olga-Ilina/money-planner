@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  formatDate, formatDay, formatMoney, formatShortDate, formatWeekdayDate, isNegativeMoney, localDateOf, roundCents, todayISO,
+  formatDate, formatDay, formatMoney, formatShortDate, formatWeekdayDate, isNegativeMoney, localDateOf, localTimeOf, roundCents,
+  todayISO,
 } from '../../src/ui/format';
 
 /** Intl puts no-break spaces (U+00A0 or U+202F) between groups and before €; compare with plain spaces. */
@@ -117,6 +118,18 @@ describe('localDateOf', () => {
   it('undefined for nothing or an unreadable value', () => {
     expect(localDateOf(undefined)).toBeUndefined();
     expect(localDateOf('вчера')).toBeUndefined();
+  });
+});
+
+describe('localTimeOf', () => {
+  it('the LOCAL time HH:MM of a stored timestamp (e.g. meta.sync.lastAt)', () => {
+    expect(localTimeOf('2026-09-30T22:30:00.000Z')).toBe('11:30'); // Auckland, UTC+13
+    expect(localTimeOf('2026-10-01T10:05:59.999Z')).toBe('23:05');
+  });
+
+  it('undefined for nothing or an unreadable value', () => {
+    expect(localTimeOf(undefined)).toBeUndefined();
+    expect(localTimeOf('вчера')).toBeUndefined();
   });
 });
 

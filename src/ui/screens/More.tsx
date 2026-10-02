@@ -1,6 +1,6 @@
 // Root screen of the «Ещё» tab; owner: D6. Plans (recurring payments, purchases, debts), settings
-// (categories and limits, accounts and the credit card, accounting and forecast, PIN), data (tracker
-// import, backup) and «О приложении» — each row opens its page in this tab.
+// (categories and limits, accounts and the credit card, accounting and forecast, PIN), data (the sync with
+// the Mac, tracker import, backup) and «О приложении» — each row opens its page in this tab.
 import type { ComponentChildren } from 'preact';
 import { version } from '../../../package.json';
 import { needsBackup } from '../actions';
@@ -9,6 +9,7 @@ import { Page, Row, Section } from '../kit';
 import type { IconName } from '../kit';
 import { pushPage } from '../nav';
 import { data, meta } from '../state';
+import { syncOf } from '../sync';
 
 const open = (page: string) => () => pushPage('more', page);
 
@@ -26,6 +27,12 @@ function backupLine(): ComponentChildren {
       <span class="tone-orange">— пора сделать новую</span>
     </>
   );
+}
+
+/** «Последняя 01.10.2026» once synced; what it is before the first sync. */
+function syncLine(): string {
+  const last = localDateOf(syncOf(meta.value)?.lastAt);
+  return last ? `Последняя ${formatDate(last)}` : 'С Mac через iCloud Drive';
 }
 
 interface Item {
@@ -59,6 +66,7 @@ export function More() {
     {
       header: 'Данные',
       items: [
+        { title: 'Синхронизация', page: 'sync', icon: 'arrows', subtitle: syncLine() },
         { title: 'Загрузить трекер', page: 'import', icon: 'upload', subtitle: 'Из Excel, заменит данные' },
         { title: 'Резервная копия', page: 'backup', icon: 'share', subtitle: backupLine() },
       ],

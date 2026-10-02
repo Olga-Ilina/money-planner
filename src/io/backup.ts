@@ -29,9 +29,12 @@ const YES = 'Да';
 const NO = 'Нет';
 
 const SHEET = {
-  settings: 'Настройки', categories: 'Категории', accounts: 'Счета', operations: 'Операции', journal: 'Журнал',
+  settings: 'Настройки', categories: 'Категории', accounts: 'Счета', operations: 'Операции', journal: 'Запланированные',
   recurring: 'Постоянные', marks: 'Отметки', purchases: 'Покупки', debts: 'Долги', schema: '_schema',
 } as const;
+
+/** The journal sheet of a copy made before the tracker sheet «Журнал» was renamed «Запланированные» (format version 1 both). */
+const OLD_JOURNAL_SHEET = 'Журнал';
 
 /** «Настройки» has two columns; each row is a parameter, named here by the model field it holds. */
 const SETTINGS_COLUMNS = { name: 'Параметр', value: 'Значение' } as const;
@@ -189,9 +192,11 @@ function col<T>(header: string, width: number, value: (row: T) => CellValue, for
   return format === undefined ? { header, width, value } : { header, width, value, format };
 }
 
-async function writeBackup(data: Data, exportedAt: string): Promise<ArrayBuffer> {
+async function writeBackup(data: Data, exportedAt: string, opts: ExportOptions): Promise<ArrayBuffer> {
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
+  // the sync stamp (src/io/sync.ts) goes into docProps/core.xml <dc:description>; nothing reads it as data
+  if (opts.stamp !== undefined) wb.description = opts.stamp;
   const names = new Map(data.accounts.map((a) => [a.id, a.name]));
   const accountName = (id: string | undefined): string | undefined => (id === undefined ? undefined : names.get(id));
   const money = <T>(header: string, value: (row: T) => number | undefined): Column<T> => col(header, 13, value, MONEY_FORMAT);
@@ -327,9 +332,14 @@ async function writeBackup(data: Data, exportedAt: string): Promise<ArrayBuffer>
   return new Uint8Array(await wb.xlsx.writeBuffer()).buffer;
 }
 
-export async function exportBackup(data: Data, exportedAt: string): Promise<ArrayBuffer> {
+export interface ExportOptions {
+  /** The sync stamp (formatStamp, src/io/sync.ts), written as the document's description («Отправить на Mac»). */
+  stamp?: string;
+}
+
+export async function exportBackup(data: Data, exportedAt: string, opts: ExportOptions = {}): Promise<ArrayBuffer> {
   const clean = restorable(data);
-  const buf = await writeBackup(clean, exportedAt);
+  const buf = await writeBackup(clean, exportedAt, opts);
   await checkReadsBack(buf, clean);
   return buf;
 }
@@ -641,6 +651,14 @@ function readSettings(ws: Worksheet): { settings: Settings; credit: CreditSettin
   };
 }
 
+/** The sheet of the journal rows under either of its names; a copy that has both cannot be told apart. */
+function journalSheet(wb: Workbook): Worksheet | undefined {
+  const current = wb.getWorksheet(SHEET.journal);
+  const old = wb.getWorksheet(OLD_JOURNAL_SHEET);
+  if (current && old) throw new BackupError(`В копии есть и лист «${SHEET.journal}», и лист «${OLD_JOURNAL_SHEET}» — должен остаться один.`);
+  return current ?? old;
+}
+
 export async function importBackup(buf: ArrayBuffer): Promise<Data> {
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
@@ -650,9 +668,9 @@ export async function importBackup(buf: ArrayBuffer): Promise<Data> {
     throw new BackupError(NOT_A_BACKUP);
   }
   readSchemaVersion(wb);
-  const sheets = Object.values(SHEET).map((name) => wb.getWorksheet(name));
-  if (sheets.some((ws) => ws === undefined)) throw new BackupError(NOT_A_BACKUP);
-  const sheet = (name: string): Worksheet => wb.getWorksheet(name)!;
+  const find = (name: string): Worksheet | undefined => (name === SHEET.journal ? journalSheet(wb) : wb.getWorksheet(name));
+  if (Object.values(SHEET).some((name) => find(name) === undefined)) throw new BackupError(NOT_A_BACKUP);
+  const sheet = (name: string): Worksheet => find(name)!;
 
   const { settings, credit } = readSettings(sheet(SHEET.settings));
 

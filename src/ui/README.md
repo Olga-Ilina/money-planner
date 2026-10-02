@@ -35,7 +35,7 @@ together with every user. Spec: `.internal/specs/…-design.md` §5–§7.
   Excel files use): `ACCOUNT_TYPE_LABEL` (and `SAVINGS_NOTE`, the one line on what a savings account is), `KIND_LABEL`,
   `JOURNAL_STATUS_LABEL`, `SOURCE_LABEL` (feed sources),
   `MOVEMENT_SOURCE_LABEL` (+ «Автопогашение»; a journal row is «Плановая запись» there, as everywhere on screen —
-  the files keep the tracker's «Журнал»), `DUPLICATE_LABEL`, `PRIORITIES`. Never copy them into a screen.
+  the files keep the tracker's sheet name «Запланированные»), `DUPLICATE_LABEL`, `PRIORITIES`. Never copy them into a screen.
 - Optional form fields emit `undefined` (never `''`) when cleared; store them as absent, not as `''`.
 - Excel import/export only through `src/ui/io.ts` loaders (never a static import of `src/io/*` — that would pull
   ExcelJS into the main bundle). Files go to the user through `shareFile`, come from them through `pickFile`.
@@ -76,6 +76,7 @@ together with every user. Spec: `.internal/specs/…-design.md` §5–§7.
 | `TabBar.tsx`, `TabContent.tsx`, `nav.ts`, `pages.ts`, `scroll.ts` | tabs, per-tab page stacks, page registry, scroll memory |
 | `state.ts`, `actions.ts` | signals and all data / meta changes |
 | `format.ts`, `share.ts`, `io.ts`, `backupNow.ts`, `backupCopy.ts`, `pwa.ts` | formats, share/pick files, lazy Excel modules, full backup (and «Сделать копию» as the user sees it), app updates |
+| `sync.ts` | the iCloud Drive sync with the Mac (see «Sync with the Mac» below): the sync state, unsent changes, «Отправить на Mac», the data set kept before «Забрать с Mac» |
 | `kit/*` (import from `kit/index.ts`) | design kit |
 | `screens/{Today,Feed,Accounts,Reports,More}.tsx` | the five tab root screens (+ `accountsParts.tsx`, `charts.ts`) |
 | `pages/*Page.tsx` | sub-pages registered in `pages.ts` (+ their helpers: `ReplaceDataSheet`, `usageText`, `yearChange`, `*Edit.ts`) |
@@ -94,7 +95,8 @@ Tabs (`TabBar`), each with its root screen and the pages pushed on top of it; sh
   counts as none, and the card then asks for one (a purchase: also a price or cost). «Этот месяц»: «Доход», «Расход» → «Лента» at that month. «Проверьте записи» (each counts what the place it
   opens can show): «Оплачено без счёта» and «Возможные дубли» — the rows «Лента» finds over the 12 accounting months
   (`feedCheckCounts`) → «Лента» filtered to them (`openFeedCheck`); «Куплено без даты» → `purchases`; «Вне учётного
-  года» → `settings`.
+  года» → `settings`. At the bottom, only once the sync is in use: «Отправьте изменения на Mac» (a quiet one-line row) when
+  the data hold changes not sent and the last sync is more than a day old → `sync`.
 - **«Лента»** — `screens/Feed.tsx`. The month (`feedMonth`), the filter «Все / Траты / Доходы / Не оплачено», the
   month's «Доход» and «Расход» with their plans, the records by date (badges «дубль?», «без счёта»; the check reads
   «Оплачено / Получено / Куплено») → `item`. «+» → `add` → a form (an operation and a planned record are dated in the
@@ -113,7 +115,8 @@ Tabs (`TabBar`), each with its root screen and the pages pushed on top of it; sh
   («Покупки» → `purchase` form; «Хватит ли денег» from `purchaseStatus`), `debts` («Долги» → `debt` form). Настройки:
   `categories` («Категории и лимиты»), `accounts-settings` («Счета и кредитка»; the type «Сберегательная» shows
   `SAVINGS_NOTE` as the field's hint), `settings` («Учёт и прогноз»: the accounting year, the forecast, the
-  cushion, the balances date; explains records outside the year), `pin` («PIN-код»). Данные: `import` («Загрузить
+  cushion, the balances date; explains records outside the year), `pin` («PIN-код»). Данные: `sync` («Синхронизация»:
+  the status, «Отправить на Mac», «Забрать с Mac», «Вернуть данные до синхронизации»), `import` («Загрузить
   трекер»), `backup` («Резервная копия»: `makeCopy`, restore). `about` («О приложении»).
 - **Sheets** — `operation` (OperationForm), `journal` (JournalForm: a planned record), `recurring`, `purchase`, `debt`
   (the plan forms), `item` (ItemSheet: the card of any record — pay / mark / buy, postpone, «Пометить отменённой»,
@@ -131,7 +134,7 @@ Read `x.value` in a component and it re-renders when the value changes.
 | Export | Type | Notes |
 | --- | --- | --- |
 | `data` | `Signal<Data \| null>` | the app data; set only by `actions` |
-| `meta` | `Signal<Meta>` | this tab's meta: PIN lock state, `lastBackupAt`, `lastImportAt`, `generation` (`src/store/db.ts`); change it only through `actions.updateMeta`. Its PIN (hash, salt, iterations) is the PIN this tab unlocks with, and its `generation` the data set this tab loaded |
+| `meta` | `Signal<Meta>` | this tab's meta: PIN lock state, `lastBackupAt`, `lastImportAt`, `generation`, `sync` (`src/store/db.ts`); change it only through `actions.updateMeta`. Its PIN (hash, salt, iterations) is the PIN this tab unlocks with, and its `generation` the data set this tab loaded |
 | `locked` | `Signal<boolean>` | PIN screen shown |
 | `stopped` | `Signal<boolean>` | another tab deleted the data or set up new ones: only the stop screen is shown until a reload (`generation.ts`) |
 | `tab` | `Signal<Tab>` | `'today' \| 'feed' \| 'accounts' \| 'reports' \| 'more'` |
@@ -180,6 +183,9 @@ message it drops it, so «Отменить» never reverts the wrong change).
   Never write the whole meta: `saveMeta` is for the store and tests only (a test keeps it out of `src/ui`).
 - `actions.markBackupDone(): Promise<void>` — the stored `lastBackupAt = now`, nothing else (`backupNow()` calls it for you).
   Never rejects: a failed save shows a toast, except `StaleTabError` (the tab has stopped; its stop screen says why).
+- `actions.setSync(sync: SyncState | undefined): Promise<void>` — the stored `meta.sync` (the iCloud Drive sync state;
+  `undefined` removes it: «never synced»), nothing else. Rejects like `updateMeta` (`StaleTabError`, a `StoreError`);
+  the caller says what it means. Only `sync.ts` and the «Синхронизация» page call it.
 - `actions.flush(): Promise<void>` — waits for queued data and meta writes.
 - `needsBackup(meta, data, now: Date | number = Date.now()): boolean` — true when there is something to lose (any
   operation, journal row, recurring payment, purchase, debt, or an account with a non-zero start) and no backup
@@ -205,6 +211,11 @@ was found, then ask in a local `Sheet` (not `Confirm`, which has one action) tha
 ```
 `copyFirst` = `await backupNow()` (it shows its own toast on failure); `replace` = `setBusy(true); try { await
 actions.replaceData(next); setAskOpen(false); } catch (e) { setError(ioErrorMessage(e)); } finally { setBusy(false); }`.
+`pages/ReplaceDataSheet.tsx` is that sheet with the counts; «Забрать с Mac» passes `replace={replaceKeepingBefore}` and
+its own `note` (the data it replaces can be brought back), every other user keeps the defaults. Its `usePickedFile<T>()`
+keeps whatever `read` returns (a `PendingReplace` with more fields, e.g. the Mac version of `readTrackerStamped`).
+A tracker is read with `readTrackerStamped` (`sync.ts`), not `loadTrackerImport()` directly: once the data are replaced,
+`setSyncFromImport(mac)` when it carries a Mac version (see «Sync with the Mac»).
 
 ## PIN lock and meta — `lockState.ts`, `generation.ts` (not to be changed by screens)
 
@@ -281,7 +292,7 @@ actions.replaceData(next); setAskOpen(false); } catch (e) { setError(ioErrorMess
   to an account: `openTab('accounts', 'account', { id })`).
 - `selectTab(tab)` — what the tab bar does (switching keeps each stack; tapping the active tab pops to root).
 - Registered pages (`pages.ts`): `recurring`, `purchases`, `debts`, `categories`, `accounts-settings`,
-  `settings`, `pin`, `import`, `backup`, `about`, `account` (params `{ id }`), `credit`.
+  `settings`, `pin`, `import`, `backup`, `about`, `account` (params `{ id }`), `credit`, `sync`.
   A page component takes `RoutedPageProps` = `{ params: Record<string, string> }` and renders a `<Page>`.
 - `<Page>` inside a tab shows the back button automatically: ‹ + the title of the page below (its accessible name
   is «Назад: <title>»).
@@ -368,6 +379,7 @@ uses it), the bright `--green` only fills and icons; likewise red and orange TEX
   the reactive `today()`.
 - `localDateOf(stamp?: string)` → the local date of a stored ISO timestamp, or `undefined` when there is none or it
   cannot be read. The last backup: `const d = localDateOf(meta.value.lastBackupAt); d ? formatDate(d) : 'ещё не было'`.
+- `localTimeOf(stamp?: string)` → its local time 'HH:MM' (or `undefined`): the last sync «01.10.2026, 23:05».
 
 ## Files — `share.ts`, `io.ts`, `backupNow.ts`
 
@@ -392,13 +404,53 @@ await shareFile(filename, buffer);   // 'shared' | 'cancelled' | 'downloaded'
 - `backupNow(): Promise<'shared' | 'downloaded' | 'cancelled'>` — the full backup: `exportBackup(data, now as an ISO datetime)` → `shareFile(backupFilename(local today))` →
   `markBackupDone()` unless cancelled. A failure shows a toast with the error's message (e.g. the `BackupError`)
   and resolves `'cancelled'` (nothing recorded). A second call while one runs joins it.
-- `loadTrackerImport()` → `{ importTracker }`, `loadBackup()` → `{ exportBackup, importBackup, backupFilename }`,
-  `loadReports()` → `{ monthReport, yearReport, accountsReport }`. A chunk that fails to download rejects with
+- `loadTrackerImport()` → `{ importTracker }`, `loadBackup()` → `{ exportBackup, importBackup, backupFilename }`
+  (`exportBackup(data, at, { stamp })` writes a sync stamp as the document's description),
+  `loadReports()` → `{ monthReport, yearReport, accountsReport }`, `loadSync()` → `{ formatStamp, parseStamp,
+  readStamp, newSyncId, stampTime, dataHash }` (small, no ExcelJS; jszip only inside `readStamp`). A chunk that fails to download rejects with
   «Не удалось загрузить модуль, проверьте подключение.»
 - `ioErrorMessage(e)` — the text to show: the message of `TrackerImportError`, `BackupError`, `StoreError`,
-  `DataChangedError`, `FileTooLargeError` or a failed module load; anything else «Что-то пошло не так. Данные не
+  `DataChangedError`, `FileTooLargeError`, `SyncError` or a failed module load; anything else «Что-то пошло не так. Данные не
   изменены.» Never leave a half-applied state: read/parse first, then `actions.replaceData` (import/restore) or
   `actions.commit`.
+
+## Sync with the Mac — `sync.ts` (spec `.internal/specs/2026-10-01-icloud-sync.md`)
+
+The app and the Excel tracker on the Mac meet in the iCloud Drive folder «Трекер расходов — синхронизация»; a
+service on the Mac does its half. No network: files go out through `shareFile` and come in through `pickFile`.
+
+- **The stamp** (`src/io/sync.ts`), in `docProps/core.xml` `<dc:description>` of both files:
+  `money-planner-sync/1 id=<16 hex> base=<16 hex|-> dirty=<0|1> at=<ISO-8601 UTC> from=<app|mac>`. A stamp of ours
+  that cannot be read (or of a newer version) is a `SyncError`, never «no stamp».
+- **The state**: `meta.sync = { lastId, lastAt, syncedHash, sentDirty? }` (absent: never synced), written only by
+  `actions.setSync`; `syncOf(meta)` gives it when usable. «Есть неотправленные изменения» = `dataHash(data)` ≠
+  `syncedHash` (always when never synced), computed on demand (`hashOf` caches per data object, `useUnsent()`), never
+  written per commit. `sentDirty`: a version was sent with changes and no Mac file built on it has been picked up
+  since — it stays through later sends and goes when a picked Mac file has `id == lastId` (`resolveSentDirty`) or a Mac
+  version is taken (any `setSync` after a replace).
+- **«Отправить на Mac»** (`sendToMac()`, from the tap): new id, `base = lastId` (or «-»), `dirty` = unsent changes or
+  `sentDirty` (iOS may have put this file in the place of the one with the changes: with dirty=0 the Mac would archive
+  it as older), `from=app`, in the full backup `Из приложения.xlsx` → `shareFile`; 'shared' / 'downloaded' → `setSync`
+  (this id, this data's hash, `sentDirty` when dirty); 'cancelled' → nothing. `sending` is true meanwhile.
+- **«Забрать с Mac»** (`classifyPickUp`): no stamp → the usual tracker import; `from=app` → «выберите «Для
+  приложения.xlsx»»; `id == lastId` → «Нового нет» (and `resolveSentDirty`); a Mac version → a warning first when the app holds unsent changes
+  («Сначала отправить на Mac» / «Всё равно заменить») or when its last version was sent with changes and this file is
+  not built on it (`base ≠ lastId`); then the usual preview (`ReplaceDataSheet`) and `replaceKeepingBefore(next)`;
+  after it `setSync` (the file's id, the new data's hash).
+- **«Загрузить трекер» and the onboarding import** read with `readTrackerStamped(buf)`: the tracker plus `mac` (the
+  version of a `from=mac` stamp and the hash of the data read). After the replace `setSyncFromImport(mac)` sets the sync
+  state as «Забрать с Mac» does (no false conflict on the next send); it never rejects (a failed save: a toast). A stamp
+  that cannot be read never stops the import: `mac` is null and the first note is `STAMP_UNREADABLE`.
+- **The data set before the sync** (`saveBeforeSync` / `loadBeforeSync` in `src/store/db.ts`, key `beforeSync`): one
+  level, the data and the sync state they had. `replaceKeepingBefore` replaces nothing unless it was kept first (and
+  refuses with `DataChangedError` when the data changed while it was kept), and puts the earlier one back when the
+  replace fails (when that fails too, `beforeSync` is read again: what is offered is what is stored). Written like the
+  data — only while the stored generation is this tab's (a `StaleTabError` stops the tab) — and read only for this
+  tab's generation; a wipe deletes it. «Вернуть данные до синхронизации» (`restoreBeforeSync`) reads it again (the
+  newest of this data set), brings back the data (`actions.replaceData`), then its sync state and then forgets it — two
+  separate steps, one failing never skips the other — and says how it went in a toast. Nothing kept: «Данных до
+  синхронизации больше нет.» — or, in a tab whose data set another tab replaced, the tab stops.
+- **«Сегодня»**: `reminderDue(sync)` (synced, more than a day ago) and `useUnsent(due)` → one quiet row.
 
 ## App flow (for reference; not to be changed by screens)
 

@@ -97,3 +97,15 @@ export function localDateOf(stamp: string | undefined): ISODate | undefined {
   const t = Date.parse(stamp);
   return Number.isFinite(t) ? todayISO(new Date(t)) : undefined;
 }
+
+/**
+ * The local time 'HH:MM' of a stored timestamp such as meta.sync.lastAt ('2026-10-01T10:05:00.000Z' → '23:05'
+ * in Auckland); undefined when there is none or it cannot be read. Next to localDateOf: «01.10.2026, 23:05».
+ */
+export function localTimeOf(stamp: string | undefined): string | undefined {
+  if (!stamp) return undefined;
+  const t = Date.parse(stamp);
+  if (!Number.isFinite(t)) return undefined;
+  const d = new Date(t);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}

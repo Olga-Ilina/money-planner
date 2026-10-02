@@ -1,6 +1,8 @@
 // On-device storage: IndexedDB database 'money-planner' (version 1) with one object store 'kv'
-// (out-of-line keys) holding two documents: 'data' (the Data model) and 'meta' (PIN lock state,
-// backup and import dates, the data generation). Every call opens its own connection and closes it when done.
+// (out-of-line keys) holding the documents 'data' (the Data model), 'meta' (PIN lock state, backup and
+// import dates, the data generation, the sync state) and 'beforeSync' (the data set «Забрать с Mac»
+// replaced, one level, for «Вернуть данные до синхронизации»). Every call opens its own connection and
+// closes it when done.
 import { SCHEMA_VERSION } from '../engine/model';
 import type { Data } from '../engine/model';
 
@@ -17,6 +19,36 @@ export interface Meta {
    * new PIN, cleared by a wipe, given once to a meta stored before it existed (loadMetaAtStart). A tab
    * remembers the one it loaded; another one stored means another tab deleted the data or set up new ones.
    */
+  generation?: string;
+  /** What the app last exchanged with the Mac (iCloud Drive sync); absent: never synced. Written by actions.setSync. */
+  sync?: SyncState;
+}
+
+/** The iCloud Drive sync with the Mac (spec 2026-10-01-icloud-sync), as the app last left it. */
+export interface SyncState {
+  /** The id of the last version sent to or taken from the Mac (16 hex). */
+  lastId: string;
+  /** When (ISO datetime). */
+  lastAt: string;
+  /** dataHash of the data set at that moment: another hash now means changes not sent yet. */
+  syncedHash: string;
+  /**
+   * A version was sent from the app with changes (dirty=1) and no Mac file built on it has been picked up
+   * since: a file from the Mac that is not built on the last one (its base is not lastId) lacks them, and
+   * taking it warns first; later sends stay dirty=1 meanwhile. Absent after taking a Mac version, or once a
+   * picked Mac file carries lastId itself (src/ui/sync.ts resolveSentDirty).
+   */
+  sentDirty?: true;
+}
+
+/** The data set «Забрать с Mac» replaced — kept one level deep for «Вернуть данные до синхронизации». */
+export interface BeforeSync {
+  data: Data;
+  /** When it was replaced (ISO datetime). */
+  at: string;
+  /** The sync state it had (absent: never synced). */
+  sync?: SyncState;
+  /** The data set it belongs to (set by saveBeforeSync). */
   generation?: string;
 }
 
@@ -67,6 +99,9 @@ const DB_VERSION = 1;
 const STORE = 'kv';
 const DATA_KEY = 'data';
 const META_KEY = 'meta';
+const BEFORE_SYNC_KEY = 'beforeSync';
+/** In readThenWrite's writes: delete the key instead of writing a value. */
+const REMOVE = Symbol('remove');
 
 const MSG_NEWER = 'Данные сохранены более новой версией приложения. Обновите приложение.';
 const MSG_DAMAGED = 'Сохранённые данные повреждены или имеют неизвестный формат.';
@@ -136,7 +171,7 @@ class Refused {
 
 /**
  * ONE readwrite transaction: reads `key`, `plan` decides from what is stored (undefined: nothing) what to
- * write and what to resolve with, the writes are made and the transaction commits — no other transaction
+ * write (REMOVE: delete the key) and what to resolve with, the writes are made and the transaction commits — no other transaction
  * can come in between. An error thrown by `plan` aborts it (nothing written) and rejects with that very
  * error; any other failure rejects with a StoreError: 'read' when the stored value could not be read,
  * 'write' otherwise (and 'quota', 'newer-version', 'unavailable' as everywhere).
@@ -179,7 +214,10 @@ async function readThenWrite<T>(key: string, plan: (raw: unknown) => { result: T
           }
           result = p.result;
           try {
-            for (const [k, v] of p.writes) store.put(v, k);
+            for (const [k, v] of p.writes) {
+              if (v === REMOVE) store.delete(k);
+              else store.put(v, k);
+            }
           } catch (e) {
             failure = e; // DataCloneError, QuotaExceededError…
             tx.abort();
@@ -249,6 +287,36 @@ export async function saveData(data: Data, check?: { generation: string | undefi
     if (readMeta(raw).generation !== check.generation) throw new StaleTabError();
     return { result: undefined, writes: [[DATA_KEY, data]] };
   });
+}
+
+/**
+ * Keeps `snapshot` as the data set before the sync (null removes it): one level, a new one replaces the old.
+ * Like the app's saveData, in ONE transaction that first reads the stored meta and writes only while its
+ * generation is `check.generation` (none stored and undefined are the same); otherwise it rejects with
+ * StaleTabError and writes nothing — one data set's data never lands in another's storage. The snapshot
+ * is stored with that generation. A wipe deletes it with everything else.
+ */
+export async function saveBeforeSync(snapshot: BeforeSync | null, check: { generation: string | undefined }): Promise<void> {
+  await readThenWrite(META_KEY, (raw) => {
+    if (readMeta(raw).generation !== check.generation) throw new StaleTabError();
+    const value = snapshot === null ? REMOVE : { ...snapshot, generation: check.generation };
+    return { result: undefined, writes: [[BEFORE_SYNC_KEY, value]] };
+  });
+}
+
+/**
+ * The data set kept before the sync — only when it belongs to `check.generation` (this tab's data set);
+ * null when there is none or it is another data set's. A kept value that cannot be read rejects with a
+ * StoreError ('damaged', or 'newer-version' for data of a newer schema): it is never restored half-read.
+ */
+export async function loadBeforeSync(check: { generation: string | undefined }): Promise<BeforeSync | null> {
+  const raw = await read(BEFORE_SYNC_KEY);
+  if (raw === undefined) return null;
+  if (!isRecord(raw) || typeof raw.at !== 'string') throw new StoreError(MSG_DAMAGED, { code: 'damaged' });
+  if (raw.generation !== check.generation) return null;
+  const kept = { ...(raw as unknown as BeforeSync), data: migrate(raw.data) };
+  if (kept.generation === undefined) delete kept.generation;
+  return kept;
 }
 
 /**

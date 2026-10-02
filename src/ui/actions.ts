@@ -6,7 +6,7 @@
 // generation, generation.ts); otherwise nothing is saved and the tab stops.
 import type { Data } from '../engine';
 import { StaleTabError, StoreError, hasGeneration, newGeneration, saveData, updateStoredMeta } from '../store/db';
-import type { Meta } from '../store/db';
+import type { Meta, SyncState } from '../store/db';
 import { generationPending, isStale, sameGeneration, setGenerationPending, stopTab } from './generation';
 import { hideToast, showToast } from './kit/Toast';
 import { PIN_FIELDS, data, feedMonth, hasPin, meta, onResetSession, samePin, stopped } from './state';
@@ -296,6 +296,19 @@ async function markBackupDone(): Promise<void> {
   }
 }
 
+/**
+ * The sync state (meta.sync: the iCloud Drive sync with the Mac) — `undefined` removes it («never synced»).
+ * Changes nothing else of the stored meta. Rejects like updateMeta (StaleTabError: the tab has stopped; a
+ * StoreError when the save fails — memory then keeps the state it had); the caller says what it means.
+ */
+async function setSync(sync: SyncState | undefined): Promise<void> {
+  await updateMeta((m) => {
+    const next: Meta = { ...m, sync };
+    if (sync === undefined) delete next.sync;
+    return next;
+  });
+}
+
 /** Resolves when every queued data and meta write has finished (whatever its outcome). */
 async function flush(): Promise<void> {
   for (;;) {
@@ -309,7 +322,7 @@ async function flush(): Promise<void> {
   }
 }
 
-export const actions = { commit, undo, replaceData, updateMeta, markBackupDone, flush };
+export const actions = { commit, undo, replaceData, updateMeta, markBackupDone, setSync, flush };
 
 /** True when there is something to lose (any row or a non-zero balance) and no backup for 14 days. */
 export function needsBackup(m: Meta, d: Data | null, now: Date | number = Date.now()): boolean {

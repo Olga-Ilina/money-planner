@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StoreError } from '../../src/store/db';
 import { BackupError } from '../../src/io/backup';
 import { TrackerImportError } from '../../src/io/importTracker';
+import { SyncError } from '../../src/io/sync';
 import { GENERIC_ERROR, MODULE_ERROR, ioErrorMessage } from '../../src/ui/io';
 
 describe('ioErrorMessage', () => {
@@ -11,6 +12,7 @@ describe('ioErrorMessage', () => {
       'Это не резервная копия приложения «Трекер расходов».',
     );
     expect(ioErrorMessage(new StoreError('Не удалось сохранить данные.'))).toBe('Не удалось сохранить данные.');
+    expect(ioErrorMessage(new SyncError('Отметка синхронизации в файле повреждена.'))).toBe('Отметка синхронизации в файле повреждена.');
   });
 
   it('anything else gets the generic message', () => {
@@ -25,6 +27,7 @@ describe('lazy I/O modules', () => {
     vi.doUnmock('../../src/io/backup');
     vi.doUnmock('../../src/io/importTracker');
     vi.doUnmock('../../src/io/reports');
+    vi.doUnmock('../../src/io/sync');
     vi.resetModules();
   });
 
@@ -33,12 +36,14 @@ describe('lazy I/O modules', () => {
     expect(typeof (await io.loadTrackerImport()).importTracker).toBe('function');
     expect(typeof (await io.loadBackup()).exportBackup).toBe('function');
     expect(typeof (await io.loadReports()).monthReport).toBe('function');
+    expect(typeof (await io.loadSync()).readStamp).toBe('function');
   });
 
   it.each([
     ['../../src/io/importTracker', 'loadTrackerImport'],
     ['../../src/io/backup', 'loadBackup'],
     ['../../src/io/reports', 'loadReports'],
+    ['../../src/io/sync', 'loadSync'],
   ] as const)('%s that fails to download asks to check the connection', async (path, loader) => {
     vi.resetModules();
     vi.doMock(path, () => Promise.reject(new TypeError('Failed to fetch dynamically imported module')));

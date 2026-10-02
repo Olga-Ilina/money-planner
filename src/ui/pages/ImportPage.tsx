@@ -1,32 +1,29 @@
 // Page «Загрузить трекер» (registered as 'import' in src/ui/pages.ts); owner: D6.
 // Reads the Excel tracker, shows what is in it next to what is in the app, and only after the user
 // chooses «Заменить данные в приложении» (with «Сначала сделать копию» offered) replaces everything —
-// not undoable (ReplaceDataSheet).
+// not undoable (ReplaceDataSheet). A tracker the Mac stamped («Для приложения.xlsx») also sets the sync
+// state, as «Забрать с Mac» does (sync.ts: readTrackerStamped, setSyncFromImport).
 import './ImportPage.css';
 import { actions } from '../actions';
 import { formatDate, localDateOf } from '../format';
-import { loadTrackerImport } from '../io';
 import { Banner, Button, Page, Row, Section, showToast } from '../kit';
 import type { RoutedPageProps } from '../nav';
 import { meta } from '../state';
+import { readTrackerStamped, setSyncFromImport } from '../sync';
 import { ReplaceDataSheet, usePickedFile } from './ReplaceDataSheet';
-import type { PendingReplace } from './ReplaceDataSheet';
-
-async function readTracker(buf: ArrayBuffer): Promise<PendingReplace> {
-  const { importTracker } = await loadTrackerImport();
-  return importTracker(buf);
-}
 
 export function ImportPage(_props: RoutedPageProps) {
-  const file = usePickedFile();
+  const file = usePickedFile<Awaited<ReturnType<typeof readTrackerStamped>>>();
   const last = localDateOf(meta.value.lastImportAt);
 
   const onReplaced = () => {
     const at = new Date().toISOString();
+    const mac = file.pending?.mac;
     // only a date shown here: a failed save of it is not worth a message
     actions.updateMeta((m) => ({ ...m, lastImportAt: at })).catch(() => {});
     file.clear();
     showToast('Трекер загружен');
+    if (mac) void setSyncFromImport(mac); // after the toast: a failure replaces it with its own
   };
 
   return (
@@ -50,7 +47,7 @@ export function ImportPage(_props: RoutedPageProps) {
       </Section>
       {file.error && <Banner tone="error">{file.error}</Banner>}
       <div class="import-actions">
-        <Button full disabled={file.reading} onClick={() => file.pick(readTracker)}>
+        <Button full disabled={file.reading} onClick={() => file.pick(readTrackerStamped)}>
           {file.reading ? 'Читаю файл…' : 'Выбрать файл'}
         </Button>
       </div>

@@ -34,17 +34,17 @@ describe('engine labels', () => {
   });
 
   it('names every source of the month feed', () => {
-    expect(SOURCE_LABEL).toEqual({ operation: 'Операция', journal: 'Журнал', recurring: 'Постоянный', purchase: 'Покупка' });
+    expect(SOURCE_LABEL).toEqual({ operation: 'Операция', journal: 'Запланированные', recurring: 'Постоянный', purchase: 'Покупка' });
   });
 
   it('names every source of an account movement: the feed sources and the credit card auto-payment', () => {
-    // on screen a journal row is a «Плановая запись»; the files keep the tracker's «Журнал» (SOURCE_LABEL)
+    // on screen a journal row is a «Плановая запись»; the files keep the tracker's sheet name «Запланированные» (SOURCE_LABEL)
     expect(MOVEMENT_SOURCE_LABEL).toEqual({ ...SOURCE_LABEL, journal: 'Плановая запись', repayment: 'Автопогашение' });
-    expect(SOURCE_LABEL.journal).toBe('Журнал');
+    expect(SOURCE_LABEL.journal).toBe('Запланированные');
   });
 
   it('names what an item may duplicate', () => {
-    expect(DUPLICATE_LABEL).toEqual({ journal: 'Журнал', recurring: 'Постоянные', purchase: 'Покупки' });
+    expect(DUPLICATE_LABEL).toEqual({ journal: 'Запланированные', recurring: 'Постоянные', purchase: 'Покупки' });
   });
 
   it('lists the priorities in the tracker order', () => {

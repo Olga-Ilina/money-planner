@@ -6,15 +6,19 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/pr
 import { IDBFactory, IDBObjectStore } from 'fake-indexeddb';
 import { emptyData } from '../../src/engine';
 import type { Data } from '../../src/engine';
+import { dataHash } from '../../src/io/sync';
 import * as db from '../../src/store/db';
 import * as pin from '../../src/store/pin';
 import { checkPin, setPin } from '../../src/store/pin';
+import { actions } from '../../src/ui/actions';
 import { todayISO } from '../../src/ui/format';
 import * as io from '../../src/ui/io';
 import { Icon } from '../../src/ui/kit';
 import { Onboarding } from '../../src/ui/Onboarding';
 import * as share from '../../src/ui/share';
 import { data, locked, meta as appMeta, resetSession, tab } from '../../src/ui/state';
+import { STAMP_UNREADABLE } from '../../src/ui/sync';
+import { MAC_ID, macStampText, stampedTracker } from './sync/stamped';
 
 vi.mock('../../src/ui/share', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../src/ui/share')>();
@@ -362,6 +366,42 @@ describe('Onboarding — «Загрузить трекер из Excel»', () => 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
   });
+});
+
+describe('Onboarding — a tracker the Mac stamped («Для приложения.xlsx», spec 2026-10-01-icloud-sync)', () => {
+  it('after «Готово» the sync state is that Mac version and the data; the PIN and generation as onboarding set them', async () => {
+    vi.mocked(share.pickFile).mockResolvedValue(await stampedTracker(macStampText()));
+    render(<Onboarding />);
+    await choosePin('1234');
+    fireEvent.click(screen.getByRole('button', { name: /Загрузить трекер из Excel/ }));
+    await screen.findByRole('dialog', { name: 'Трекер загружен' }, { timeout: 10_000 });
+    expect(screen.queryByText(STAMP_UNREADABLE)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Готово' }));
+    await waitFor(() => expect(appMeta.value.sync).toBeDefined());
+    await actions.flush();
+    expect(data.value?.operations).toHaveLength(6);
+    expect(appMeta.value.sync).toEqual({ lastId: MAC_ID, lastAt: expect.any(String), syncedHash: await dataHash(data.value!) });
+    const stored = await db.loadMeta();
+    expect(stored).toEqual(appMeta.value);
+    expect((await checkPin(stored, '1234', Date.now())).ok).toBe(true);
+    expect(typeof stored.generation).toBe('string');
+    expect(tab.value).toBe('today');
+  }, 30_000);
+
+  it('a stamp that cannot be read: the summary says the sync is not marked; the tracker loads, no sync state', async () => {
+    vi.mocked(share.pickFile).mockResolvedValue(await stampedTracker('money-planner-sync/1 id=zz'));
+    render(<Onboarding />);
+    await choosePin('1234');
+    fireEvent.click(screen.getByRole('button', { name: /Загрузить трекер из Excel/ }));
+    await screen.findByRole('dialog', { name: 'Трекер загружен' }, { timeout: 10_000 });
+    expect(screen.getByText(STAMP_UNREADABLE)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Готово' }));
+    await waitFor(() => expect(data.value).not.toBeNull());
+    await actions.flush();
+    expect(data.value?.operations).toHaveLength(6);
+    expect(appMeta.value.sync).toBeUndefined();
+    expect('sync' in (await db.loadMeta())).toBe(false);
+  }, 30_000);
 });
 
 describe('Onboarding — «Восстановить из резервной копии»', () => {

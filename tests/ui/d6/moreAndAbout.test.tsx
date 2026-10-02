@@ -30,7 +30,7 @@ describe('«Ещё»', () => {
     expect(titles).toEqual([
       ['Постоянные платежи', 'Покупки', 'Долги'],
       ['Категории и лимиты', 'Счета и кредитка', 'Учёт и прогноз', 'PIN-код'],
-      ['Загрузить трекер', 'Резервная копия'],
+      ['Синхронизация', 'Загрузить трекер', 'Резервная копия'],
       ['О приложении'],
     ]);
   });
@@ -53,6 +53,7 @@ describe('«Ещё»', () => {
       [/^Счета и кредитка/, 'accounts-settings'],
       [/^Учёт и прогноз/, 'settings'],
       [/^PIN-код/, 'pin'],
+      [/^Синхронизация/, 'sync'],
       [/^Загрузить трекер/, 'import'],
       [/^Резервная копия/, 'backup'],
       [/^О приложении/, 'about'],
@@ -70,6 +71,19 @@ describe('«Ещё»', () => {
     render(<TabContent tab="more" />);
     expect(screen.getByRole('button', { name: /^Постоянные платежи/ }).textContent).toContain('4');
     expect(screen.getByRole('button', { name: /^Резервная копия/ }).textContent).toContain('Копии ещё не было');
+  });
+
+  it('«Синхронизация» says when the last sync was, or what it is before the first', () => {
+    meta.value = { failedAttempts: 0 };
+    const { unmount } = render(<TabContent tab="more" />);
+    expect(screen.getByRole('button', { name: /^Синхронизация/ }).textContent).toContain('С Mac через iCloud Drive');
+    unmount();
+    meta.value = {
+      failedAttempts: 0,
+      sync: { lastId: '0123456789abcdef', lastAt: '2026-10-01T10:00:00.000Z', syncedHash: 'f'.repeat(64) },
+    };
+    render(<TabContent tab="more" />);
+    expect(screen.getByRole('button', { name: /^Синхронизация/ }).textContent).toContain('Последняя 01.10.2026');
   });
 
   it('an old backup: «пора сделать новую» in the warning colour', () => {

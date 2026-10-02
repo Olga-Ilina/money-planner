@@ -9,7 +9,7 @@ import { ACC, scenario } from '../engine/scenario';
 const EXPORTED_AT = '2026-10-01T09:30:00.000Z';
 const NOT_A_BACKUP = 'Это не резервная копия приложения «Трекер расходов».';
 const NEWER_VERSION = 'Копия сделана более новой версией приложения. Обновите приложение.';
-const SHEETS = ['Настройки', 'Категории', 'Счета', 'Операции', 'Журнал', 'Постоянные', 'Отметки', 'Покупки', 'Долги', '_schema'];
+const SHEETS = ['Настройки', 'Категории', 'Счета', 'Операции', 'Запланированные', 'Постоянные', 'Отметки', 'Покупки', 'Долги', '_schema'];
 
 /** Every optional field in use, every enum value, awkward numbers, text and dates. */
 function rich(): Data {
@@ -211,7 +211,7 @@ describe('exportBackup checks that the copy reads back', () => {
     ['a credit card setting', (d) => { d.credit.fromAccountId = ' acc-card'; }, 'лист «Настройки», параметр «Кредитка: со счёта»'],
     ['an income category with a limit', (d) => { Object.assign(d.categories.income[1]!, { limit: 5 }); }, 'лист «Категории», строка 8, поле «Лимит»'],
     ['a month of a mark', (d) => { d.recurring[1]!.marks = { ' 2026-11': '✓' }; }, 'лист «Отметки», строка 4'],
-    ['a number that is not finite', (d) => { d.journal[2]!.plan = Number.NaN; }, 'лист «Журнал», строка 4: «План» — не число'],
+    ['a number that is not finite', (d) => { d.journal[2]!.plan = Number.NaN; }, 'лист «Запланированные», строка 4: «План» — не число'],
     ['a day out of range', (d) => { d.recurring[0]!.day = 40; }, 'лист «Постоянные», строка 2: «День» — ожидается целое число от 1 до 31'],
     ['a mark of a month that does not exist', (d) => { d.recurring[1]!.marks = { '2026-13': 5 }; }, 'лист «Отметки», строка 4: «Месяц» — не месяц в виде ГГГГ-ММ'],
   ])('refuses to hand out a copy that does not restore: %s', async (_, change, where) => {
@@ -374,7 +374,7 @@ describe('backup workbook', () => {
     expect(settings.getCell(4, 2).numFmt).toBe(MONEY_FORMAT); // Подушка
     expect(settings.getCell(5, 2).numFmt).toBe(DATE_FORMAT); // Дата остатков
 
-    const journal = wb.getWorksheet('Журнал')!;
+    const journal = wb.getWorksheet('Запланированные')!;
     expect(journal.getRow(3).getCell(8).value).toBe('Оплачено'); // j-kafe
     expect(journal.getRow(3).getCell(12).value).toBe('Карта');
     const accounts = wb.getWorksheet('Счета')!;
@@ -430,10 +430,10 @@ describe('importBackup rejects what it cannot restore', () => {
     ['Счета', 'C2', 'Золотая', 'строка 2'], // unknown account type
     ['Операции', 'C4', 'Подарок', 'строка 4'], // unknown kind
     ['Операции', 'F2', 'много', 'строка 2'], // amount is not a number
-    ['Журнал', 'B5', 'вчера', 'строка 5'], // not a date
-    ['Журнал', 'C2', 'Перевод', 'строка 2'], // journal rows are expenses or incomes
-    ['Журнал', 'H3', 'Потом', 'строка 3'], // unknown status
-    ['Журнал', 'K2', 'ноябрь', 'строка 2'], // accounting month is not YYYY-MM
+    ['Запланированные', 'B5', 'вчера', 'строка 5'], // not a date
+    ['Запланированные', 'C2', 'Перевод', 'строка 2'], // journal rows are expenses or incomes
+    ['Запланированные', 'H3', 'Потом', 'строка 3'], // unknown status
+    ['Запланированные', 'K2', 'ноябрь', 'строка 2'], // accounting month is not YYYY-MM
     ['Постоянные', 'F3', null, 'строка 3'], // no amount
     ['Отметки', 'A2', 'r-nobody', 'строка 2'], // mark of an unknown recurring row
     ['Отметки', 'C2', 'да', 'строка 2'], // mark is neither ✓ nor a number
@@ -472,8 +472,8 @@ describe('importBackup rejects what it cannot restore', () => {
   });
 
   it.each([
-    ['Журнал', 'K2', true, 'строка 2'], // «Месяц учёта» is a boolean
-    ['Журнал', 'K3', { error: '#N/A' } as const, 'строка 3'],
+    ['Запланированные', 'K2', true, 'строка 2'], // «Месяц учёта» is a boolean
+    ['Запланированные', 'K3', { error: '#N/A' } as const, 'строка 3'],
     ['Отметки', 'B2', 202701, 'строка 2'],
     ['Настройки', 'B2', true, 'Учёт с'],
     ['Настройки', 'B3', { error: '#N/A' } as const, 'Прогноз с'],
@@ -517,10 +517,10 @@ describe('importBackup rejects what it cannot restore', () => {
   });
 
   it.each([
-    ['Журнал', 'E2', new Date(Date.UTC(2027, 0, 1)), 'строка 2', '«Что» — не текст'],
+    ['Запланированные', 'E2', new Date(Date.UTC(2027, 0, 1)), 'строка 2', '«Что» — не текст'],
     ['Операции', 'D2', true, 'строка 2', '«Категория» — не текст'],
     ['Счета', 'B2', { error: '#REF!' } as const, 'строка 2', '«Название» — не текст'],
-    ['Журнал', 'H2', new Date(Date.UTC(2027, 0, 1)), 'строка 2', '«Статус» — не текст'],
+    ['Запланированные', 'H2', new Date(Date.UTC(2027, 0, 1)), 'строка 2', '«Статус» — не текст'],
     ['Операции', 'G2', false, 'строка 2', '«Счёт (id)» — не текст'],
     ['Покупки', 'H2', true, 'строка 2', '«Куплено» — ожидается «✓» или пустая ячейка'],
   ])('does not drop a non-text value in «%s» %s (%j)', async (sheet, cell, value, where, problem) => {
@@ -539,7 +539,7 @@ describe('importBackup rejects what it cannot restore', () => {
   it.each([
     ['Счета', 'acc-card'],
     ['Операции', 'o-1'],
-    ['Журнал', 'j-1'],
+    ['Запланированные', 'j-1'],
     ['Покупки', 'p-1'],
     ['Долги', 'd-1'],
   ])('rejects two rows with the same id in «%s», naming the sheet and both rows', async (sheet, id) => {
@@ -588,7 +588,7 @@ describe('importBackup reads a copy edited by hand', () => {
     const d = scenario();
     d.debts = [{ id: 'd-1', name: 'Долг' }];
     const buf = await edited(d, (wb) => {
-      for (const [sheet, cell] of [['Журнал', 'E2'], ['Постоянные', 'B2'], ['Покупки', 'B2'], ['Счета', 'B2'], ['Категории', 'B2'], ['Категории', 'B7'], ['Долги', 'B2']] as const) {
+      for (const [sheet, cell] of [['Запланированные', 'E2'], ['Постоянные', 'B2'], ['Покупки', 'B2'], ['Счета', 'B2'], ['Категории', 'B2'], ['Категории', 'B7'], ['Долги', 'B2']] as const) {
         wb.getWorksheet(sheet)!.getCell(cell).value = null;
       }
     });
@@ -601,7 +601,7 @@ describe('importBackup reads a copy edited by hand', () => {
     const buf = await edited(scenario(), (wb) => {
       wb.getWorksheet('Настройки')!.getCell('B2').value = new Date(Date.UTC(2026, 8, 1)); // Учёт с
       wb.getWorksheet('Настройки')!.getCell('B3').value = new Date(Date.UTC(2026, 11, 31)); // Прогноз с
-      wb.getWorksheet('Журнал')!.getCell('K2').value = new Date(Date.UTC(2026, 10, 1)); // Месяц учёта of j-eda
+      wb.getWorksheet('Запланированные')!.getCell('K2').value = new Date(Date.UTC(2026, 10, 1)); // Месяц учёта of j-eda
       wb.getWorksheet('Отметки')!.getCell('B3').value = new Date(Date.UTC(2027, 0, 1)); // r-arenda 950 → January
     });
     const expected = scenario();
@@ -615,5 +615,55 @@ describe('importBackup reads a copy edited by hand', () => {
   it('ignores the account name columns', async () => {
     const buf = await edited(scenario(), (wb) => { wb.getWorksheet('Операции')!.getCell('I2').value = 'Другое имя'; });
     expect(await importBackup(buf)).toStrictEqual(scenario());
+  });
+});
+
+// The tracker sheet «Журнал» is now «Запланированные»; the journal sheet of a copy made before that keeps its old name.
+describe('the sheet of the journal rows: «Запланированные», or «Журнал» in a copy made before the rename', () => {
+  const NEW = 'Запланированные';
+  const OLD = 'Журнал';
+
+  it('a new copy names it «Запланированные» and has no sheet «Журнал»', async () => {
+    const wb = await load(await exportBackup(scenario(), EXPORTED_AT));
+    expect(wb.getWorksheet(NEW)).toBeDefined();
+    expect(wb.getWorksheet(OLD)).toBeUndefined();
+    expect(wb.worksheets.map((ws) => ws.name)).toEqual(SHEETS); // in the place of the old sheet, the format is the same
+  });
+
+  it('keeps the format version 1', async () => {
+    const wb = await load(await exportBackup(scenario(), EXPORTED_AT));
+    expect(SCHEMA_VERSION).toBe(1);
+    expect(wb.getWorksheet('_schema')!.getCell('B1').value).toBe(1);
+  });
+
+  it('restores a copy whose sheet is named «Журнал» to the same data', async () => {
+    const buf = await edited(rich(), (wb) => { wb.getWorksheet(NEW)!.name = OLD; });
+    expect(await importBackup(buf)).toStrictEqual(rich());
+  });
+
+  it('restores the scenario from the old name as well', async () => {
+    const buf = await edited(scenario(), (wb) => { wb.getWorksheet(NEW)!.name = OLD; });
+    expect(await importBackup(buf)).toStrictEqual(scenario());
+  });
+
+  it('names the sheet it found in the message about a bad cell', async () => {
+    for (const name of [NEW, OLD]) {
+      const buf = await edited(scenario(), (wb) => {
+        const ws = wb.getWorksheet(NEW)!;
+        ws.name = name;
+        ws.getCell('B2').value = 'вчера'; // Дата
+      });
+      expect((await importError(buf)).message).toContain(`Лист «${name}», строка 2: «Дата» — не дата.`);
+    }
+  });
+
+  it('refuses a copy that has both sheets: it cannot tell which holds the rows', async () => {
+    const buf = await edited(scenario(), (wb) => { wb.addWorksheet(OLD); });
+    expect((await importError(buf)).message).toBe(`В копии есть и лист «${NEW}», и лист «${OLD}» — должен остаться один.`);
+  });
+
+  it('a copy without either sheet is not a backup', async () => {
+    const buf = await edited(scenario(), (wb) => { wb.getWorksheet(NEW)!.name = 'Другой лист'; });
+    expect((await importError(buf)).message).toBe(NOT_A_BACKUP);
   });
 });

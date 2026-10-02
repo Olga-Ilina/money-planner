@@ -20,13 +20,13 @@ export const SAVINGS_NOTE = 'Сберегательные счета не вхо
 
 /** Where an item of the month feed comes from. */
 export const SOURCE_LABEL: Record<FeedSource, string> = {
-  operation: 'Операция', journal: 'Журнал', recurring: 'Постоянный', purchase: 'Покупка',
+  operation: 'Операция', journal: 'Запланированные', recurring: 'Постоянный', purchase: 'Покупка',
 };
 
 /**
  * Where a movement of an account comes from (the account page): a feed source, or the credit card's
  * auto-payment. A journal row is a «Плановая запись» on screen, as everywhere in the app; the files keep
- * the tracker's sheet name «Журнал» (SOURCE_LABEL — the reports do not use this map).
+ * the tracker's sheet name «Запланированные» (SOURCE_LABEL — the reports do not use this map).
  */
 export const MOVEMENT_SOURCE_LABEL: Record<MovementSource, string> = {
   ...SOURCE_LABEL,
@@ -35,7 +35,7 @@ export const MOVEMENT_SOURCE_LABEL: Record<MovementSource, string> = {
 };
 
 /** What an item may duplicate — «Возможный дубль». */
-export const DUPLICATE_LABEL: Record<DuplicateOf, string> = { journal: 'Журнал', recurring: 'Постоянные', purchase: 'Покупки' };
+export const DUPLICATE_LABEL: Record<DuplicateOf, string> = { journal: 'Запланированные', recurring: 'Постоянные', purchase: 'Покупки' };
 
-/** The tracker's priorities (its drop-down on «Журнал» and «Покупки»), in its order. */
+/** The tracker's priorities (its drop-down on «Запланированные» and «Покупки»), in its order. */
 export const PRIORITIES = ['Обязательно', 'Желательно', 'Можно отложить'] as const;

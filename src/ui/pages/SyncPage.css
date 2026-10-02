@@ -1,0 +1,13 @@
+/* «Синхронизация» (SyncPage.tsx) */
+
+.sync-send {
+  margin: 0 16px 28px;
+}
+
+/* how to save the file on iPhone: muted like a section footer, right under the button */
+.sync-hint {
+  margin: 8px 16px 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--label-2);
+}

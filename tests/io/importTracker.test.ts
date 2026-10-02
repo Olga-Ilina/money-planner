@@ -143,7 +143,8 @@ describe('importTracker — not a tracker', () => {
     const error = await load(wb).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(TrackerImportError);
     expect((error as Error).message).toMatch(/^Это не «Трекер и планер расходов» или его старая версия/);
-    expect((error as Error).message).toContain('«Журнал», «Долги»');
+    expect((error as Error).message).toContain('«Запланированные», «Долги»');
+    expect((error as Error).message).not.toContain('«Журнал»');
   });
 
   it('rejects a file that is not an Excel workbook', async () => {

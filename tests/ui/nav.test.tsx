@@ -23,7 +23,7 @@ afterEach(() => {
 describe('pages registry', () => {
   it('has every sub-page of the contract', () => {
     expect(Object.keys(pages).sort()).toEqual(
-      ['about', 'account', 'accounts-settings', 'backup', 'categories', 'credit', 'debts', 'import', 'pin', 'purchases', 'recurring', 'settings'].sort(),
+      ['about', 'account', 'accounts-settings', 'backup', 'categories', 'credit', 'debts', 'import', 'pin', 'purchases', 'recurring', 'settings', 'sync'].sort(),
     );
   });
 });

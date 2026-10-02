@@ -14,11 +14,13 @@ import type { Meta } from '../store/db';
 import { setPin } from '../store/pin';
 import { actions } from './actions';
 import { todayISO } from './format';
-import { ioErrorMessage, loadBackup, loadTrackerImport } from './io';
+import { ioErrorMessage, loadBackup } from './io';
 import { PinChangedError } from './lockState';
 import { Banner, Button, Page, PinPad, Row, Section, Sheet } from './kit';
 import { XLSX_MIME, pickFile } from './share';
 import { hasPin, meta, samePin, tab } from './state';
+import { readTrackerStamped, setSyncFromImport } from './sync';
+import type { MacVersion } from './sync';
 
 const PIN_LENGTH = 4;
 const XLSX_ACCEPT = `.xlsx,${XLSX_MIME}`;
@@ -32,6 +34,8 @@ interface Pending {
   data: Data;
   notes: string[];
   overrides: string[];
+  /** The Mac version a tracker carries («Для приложения.xlsx»): the sync state once it is saved. */
+  mac?: MacVersion | null;
 }
 
 export function Onboarding() {
@@ -45,8 +49,8 @@ export function Onboarding() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
 
-  /** Saves the PIN (first) and the data, then opens «Сегодня». */
-  const finish = async (d: Data | null, source: Source | null) => {
+  /** Saves the PIN (first) and the data, then opens «Сегодня» (and records the Mac version `mac`, if any). */
+  const finish = async (d: Data | null, source: Source | null, mac?: MacVersion | null) => {
     setBusy(true);
     setError(null);
     const importedAt = source === 'tracker' ? new Date().toISOString() : undefined;
@@ -83,6 +87,7 @@ export function Onboarding() {
     tab.value = 'today';
     setPending(null);
     setBusy(false);
+    if (mac) void setSyncFromImport(mac); // only once the data are saved: never a sync state without them
   };
 
   const onPin = async (value: string) => {
@@ -144,11 +149,7 @@ export function Onboarding() {
     })();
   };
 
-  const importTrackerFile = () =>
-    readFile('tracker', async (buf) => {
-      const { importTracker } = await loadTrackerImport();
-      return importTracker(buf);
-    });
+  const importTrackerFile = () => readFile('tracker', readTrackerStamped);
 
   const restoreBackup = () =>
     readFile('backup', async (buf) => {
@@ -212,7 +213,7 @@ export function Onboarding() {
         onCancel={() => {
           if (!busy) setPending(null);
         }}
-        onDone={() => pending && void finish(pending.data, pending.source)}
+        onDone={() => pending && void finish(pending.data, pending.source, pending.mac)}
       />
     </div>
   );

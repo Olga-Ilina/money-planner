@@ -1,7 +1,8 @@
 // Root screen of the «Сегодня» tab (spec §5): money on cards, in cash and the credit card debt; what is
 // due in the next 7 days (and everything overdue) with one-tap payment; this month's income and expense
 // against the plan; the checks that need a look (each opens where it can be fixed); the «сделайте копию»
-// banner and a note when today is outside the accounting year. Numbers come from the engine.
+// banner and a note when today is outside the accounting year; a quiet line when changes have waited more
+// than a day to be sent to the Mac (src/ui/sync.ts). Numbers come from the engine.
 import { useMemo } from 'preact/hooks';
 import {
   accountingMonths, addDays, balances, markPaid, monthLabel, monthSummary, nextCreditDebit, opt, upcoming, warnings, ymOf,
@@ -19,6 +20,7 @@ import { knownAccount } from '../sheets/planForm';
 import { debitText } from './accountsParts';
 import { feedCheckCounts, openFeed, openFeedCheck } from './Feed';
 import { appData, meta, today } from '../state';
+import { reminderDue, syncOf, useUnsent } from '../sync';
 import './Today.css';
 
 const UPCOMING_DAYS = 7;
@@ -192,6 +194,27 @@ function BackupBanner() {
   );
 }
 
+/**
+ * One quiet row when the app holds changes not sent to the Mac and the last sync is more than a day old
+ * (only once the sync is in use) → «Синхронизация».
+ */
+function SyncReminder() {
+  const due = reminderDue(syncOf(meta.value));
+  const unsent = useUnsent(due);
+  if (!due || unsent !== true) return null;
+  return (
+    <Section>
+      <Row
+        icon="arrows"
+        iconTone="muted"
+        title="Отправьте изменения на Mac"
+        chevron
+        onClick={() => openTab('more', 'sync')}
+      />
+    </Section>
+  );
+}
+
 // ---------- screen ----------
 
 interface View {
@@ -303,6 +326,8 @@ export function Today() {
           ))}
         </Section>
       )}
+
+      <SyncReminder />
     </Page>
   );
 }

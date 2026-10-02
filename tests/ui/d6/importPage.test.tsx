@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { IDBFactory } from 'fake-indexeddb';
 import { emptyData } from '../../../src/engine';
+import { dataHash } from '../../../src/io/sync';
 import * as db from '../../../src/store/db';
 import { setPin } from '../../../src/store/pin';
 import { actions } from '../../../src/ui/actions';
@@ -14,7 +15,9 @@ import { Icon, Toast } from '../../../src/ui/kit';
 import { ImportPage } from '../../../src/ui/pages/ImportPage';
 import * as share from '../../../src/ui/share';
 import { data, meta as appMeta, resetSession } from '../../../src/ui/state';
+import { STAMP_UNREADABLE } from '../../../src/ui/sync';
 import { scenario } from '../../engine/scenario';
+import { MAC_ID, macStampText, stampedTracker } from '../sync/stamped';
 
 vi.mock('../../../src/ui/share', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../../src/ui/share')>();
@@ -30,10 +33,12 @@ vi.mock('../../../src/ui/backupNow', () => ({ backupNow: vi.fn(async () => 'shar
 
 vi.mock('../../../src/store/db', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../../src/store/db')>();
-  return { ...mod, saveData: vi.fn(mod.saveData) };
+  return { ...mod, saveData: vi.fn(mod.saveData), updateStoredMeta: vi.fn(mod.updateStoredMeta) };
 });
 
 type TrackerModule = Awaited<ReturnType<typeof io.loadTrackerImport>>;
+
+const realUpdateStoredMeta = vi.mocked(db.updateStoredMeta).getMockImplementation()!;
 
 function fixtureFile(): File {
   const bytes = readFileSync(join(import.meta.dirname, '../../fixtures/tracker-scenario.xlsx'));
@@ -73,6 +78,7 @@ beforeEach(async () => {
   vi.mocked(io.loadTrackerImport).mockClear();
   vi.mocked(backupNow).mockReset().mockResolvedValue('shared');
   vi.mocked(db.saveData).mockClear();
+  vi.mocked(db.updateStoredMeta).mockReset().mockImplementation(realUpdateStoredMeta);
 });
 
 afterEach(async () => {
@@ -234,4 +240,75 @@ describe('«Загрузить трекер»', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('alert')).toBeNull();
   });
+});
+
+describe('«Загрузить трекер» — a tracker the Mac stamped («Для приложения.xlsx», spec 2026-10-01-icloud-sync)', () => {
+  const MINE: db.Meta = { pinHash: 'aGFzaEE=', pinSalt: 'c2FsdEE=', pinIterations: 150_000, failedAttempts: 0, generation: 'g1' };
+  /** Sent from the app with changes, not yet seen back from the Mac. */
+  const SENT: db.SyncState = { lastId: '0123456789abcdef', lastAt: '2026-10-01T10:00:00.000Z', syncedHash: 'e'.repeat(64), sentDirty: true };
+
+  beforeEach(async () => {
+    appMeta.value = { ...MINE, sync: SENT };
+    await db.saveMeta(appMeta.value);
+  });
+
+  /** Picks `file`, replaces the data with it and waits for the toast `done`. */
+  async function loadAndReplace(file: File, done = 'Трекер загружен'): Promise<void> {
+    vi.mocked(share.pickFile).mockResolvedValue(file);
+    renderPage();
+    fireEvent.click(pickButton());
+    const sheet = await screen.findByRole('dialog', { name: 'Заменить данные в приложении' }, { timeout: 10_000 });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Заменить данные в приложении' }));
+    await screen.findByText(done, {}, { timeout: 10_000 });
+  }
+
+  it('after the replace the sync state is that Mac version and the new data, as «Забрать с Mac» leaves it', async () => {
+    await loadAndReplace(await stampedTracker(macStampText()));
+    expect(data.value?.operations).toHaveLength(6);
+    await actions.flush();
+    // sentDirty is gone: the data now are the Mac's version
+    expect(appMeta.value.sync).toEqual({ lastId: MAC_ID, lastAt: expect.any(String), syncedHash: await dataHash(data.value!) });
+    expect((await db.loadMeta()).sync).toEqual(appMeta.value.sync);
+    expect(appMeta.value.lastImportAt).toBeDefined();
+    // the PIN and the generation are never touched
+    expect(await db.loadMeta()).toMatchObject({ pinHash: MINE.pinHash, pinSalt: MINE.pinSalt, generation: 'g1' });
+  }, 30_000);
+
+  it('a stamp that cannot be read: the tracker still loads, the preview says the sync is not marked, the sync state stays', async () => {
+    vi.mocked(share.pickFile).mockResolvedValue(await stampedTracker('money-planner-sync/1 id=zz'));
+    renderPage();
+    fireEvent.click(pickButton());
+    const sheet = await screen.findByRole('dialog', { name: 'Заменить данные в приложении' }, { timeout: 10_000 });
+    expect(within(sheet).getByText(STAMP_UNREADABLE)).toBeTruthy();
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Заменить данные в приложении' }));
+    await screen.findByText('Трекер загружен', {}, { timeout: 10_000 });
+    expect(data.value?.operations).toHaveLength(6);
+    await actions.flush();
+    expect(appMeta.value.sync).toEqual(SENT);
+    expect((await db.loadMeta()).sync).toEqual(SENT);
+  }, 30_000);
+
+  it('the app’s own file (from=app): the sync state stays', async () => {
+    fakeImport({ data: emptyData('2026-10-01'), notes: [], overrides: [] });
+    await loadAndReplace(await stampedTracker(macStampText({ from: 'app' }), 'Из приложения.xlsx'));
+    await actions.flush();
+    expect(appMeta.value.sync).toEqual(SENT);
+    expect((await db.loadMeta()).sync).toEqual(SENT);
+  }, 30_000);
+
+  it('no stamp: the sync state stays', async () => {
+    await loadAndReplace(fixtureFile());
+    await actions.flush();
+    expect(appMeta.value.sync).toEqual(SENT);
+    expect((await db.loadMeta()).sync).toEqual(SENT);
+  }, 30_000);
+
+  it('the sync state cannot be saved: the data are loaded, a toast says the sync mark was not saved', async () => {
+    vi.mocked(db.updateStoredMeta).mockRejectedValue(new db.StoreError('Не удалось сохранить данные.', { code: 'write' }));
+    await loadAndReplace(await stampedTracker(macStampText()), 'Трекер загружен, но отметка синхронизации не сохранилась');
+    expect(data.value?.operations).toHaveLength(6);
+    await actions.flush();
+    expect(appMeta.value.sync).toEqual(SENT);
+    expect((await db.loadMeta()).sync).toEqual(SENT);
+  }, 30_000);
 });

@@ -34,11 +34,11 @@ describe('labels', () => {
   });
 
   it('names every source of the month feed', () => {
-    expect(SOURCE_LABEL).toEqual({ operation: 'Операция', journal: 'Журнал', recurring: 'Постоянный', purchase: 'Покупка' });
+    expect(SOURCE_LABEL).toEqual({ operation: 'Операция', journal: 'Запланированные', recurring: 'Постоянный', purchase: 'Покупка' });
   });
 
   it('names what an item may duplicate', () => {
-    expect(DUPLICATE_LABEL).toEqual({ journal: 'Журнал', recurring: 'Постоянные', purchase: 'Покупки' });
+    expect(DUPLICATE_LABEL).toEqual({ journal: 'Запланированные', recurring: 'Постоянные', purchase: 'Покупки' });
   });
 
   it('lists the priorities in the tracker order', () => {

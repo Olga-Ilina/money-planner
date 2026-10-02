@@ -14,6 +14,7 @@ import { PinPage } from './pages/PinPage';
 import { PurchasesPage } from './pages/PurchasesPage';
 import { RecurringPage } from './pages/RecurringPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { SyncPage } from './pages/SyncPage';
 
 export const pages: Record<string, ComponentType<RoutedPageProps>> = {
   // owner D5
@@ -28,6 +29,8 @@ export const pages: Record<string, ComponentType<RoutedPageProps>> = {
   import: ImportPage,
   backup: BackupPage,
   about: AboutPage,
+  // the iCloud Drive sync with the Mac (spec 2026-10-01-icloud-sync)
+  sync: SyncPage,
   // owner D3: 'account' takes params { id }
   account: AccountPage,
   credit: CreditPage,
