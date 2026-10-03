@@ -4,6 +4,7 @@ import type { MovementSource } from './accounts';
 import type { FeedSource } from './feed';
 import type { AccountType, JournalStatus, OpKind } from './model';
 import type { DuplicateOf } from './rules';
+import type { RowCheck } from './transfers';
 
 export const JOURNAL_STATUS_LABEL: Record<JournalStatus, string> = {
   planned: 'Запланировано', paid: 'Оплачено', postponed: 'Перенесено', cancelled: 'Отменено',
@@ -36,6 +37,20 @@ export const MOVEMENT_SOURCE_LABEL: Record<MovementSource, string> = {
 
 /** What an item may duplicate — «Возможный дубль». */
 export const DUPLICATE_LABEL: Record<DuplicateOf, string> = { journal: 'Запланированные', recurring: 'Постоянные', purchase: 'Покупки' };
+
+/** The checks of a row's type and accounts, word for word as the tracker's «Дубль или проверка» writes them. */
+export const ROW_CHECK_LABEL: Record<RowCheck, string> = {
+  looksLikeTransfer: 'Похоже на перевод — если деньги пришли с вашей карты, выберите тип «Перевод»',
+  noTarget: 'Перевод: укажите «На счёт»',
+  sameAccount: 'Перевод: «Счёт» = «На счёт»',
+};
+
+/** The lines of «Месяц» under the expense categories (none of them is in the expenses): `MonthSummary.toSavings`, … */
+export const TO_SAVINGS_LABEL = 'Переводы в накопления';
+/** … `MonthSummary.freeAfterSavings`, … */
+export const FREE_AFTER_SAVINGS_LABEL = 'Свободно после накоплений';
+/** … and `monthCardRepayment` (for reference: the card's purchases are already expenses); also an automatic row's name. */
+export const CARD_REPAYMENT_LABEL = 'Погашение кредитки';
 
 /** The tracker's priorities (its drop-down on «Запланированные» and «Покупки»), in its order. */
 export const PRIORITIES = ['Обязательно', 'Желательно', 'Можно отложить'] as const;

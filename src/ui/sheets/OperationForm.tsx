@@ -2,7 +2,8 @@
 // transfer. Amount first (large), then the kind, category chips (the most used lately first), the
 // account (the last one used for that kind), the date (today) and «Что». Validates inline, warns about a
 // possible duplicate before saving, saves through actions.commit (toast «Сохранено» with «Отменить»);
-// editing adds «Удалить». Opened with openSheet('operation', {initial?, preset?}).
+// editing adds «Удалить». «Доход» on a savings account shows the tracker's hint «Похоже на перевод…» under «Счёт».
+// Opened with openSheet('operation', {initial?, preset?}).
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { KIND_LABEL, addDays, dateInBalances, duplicatesForOperation, journalFact, newId, opAmount, opt, ymOf } from '../../engine';
 import type { Data, ISODate, OpKind, Operation } from '../../engine';
@@ -14,7 +15,7 @@ import {
 } from '../kit';
 import type { Option } from '../kit';
 import { appData, today } from '../state';
-import { outsideYearNote, showInFeed } from './planForm';
+import { outsideYearNote, showInFeed, transferHint } from './planForm';
 import './OperationForm.css';
 
 export interface OperationFormProps {
@@ -318,7 +319,13 @@ export function OperationForm({ open, onClose, initial, preset }: OperationFormP
             />
           </>
         ) : (
-          <SelectField label="Счёт" value={accounts.account} options={accountOptions} onChange={chooseAccount('account')} />
+          <SelectField
+            label="Счёт"
+            value={accounts.account}
+            options={accountOptions}
+            onChange={chooseAccount('account')}
+            hint={transferHint(d, kind, accounts.account)}
+          />
         )}
         <DateField
           label="Дата"

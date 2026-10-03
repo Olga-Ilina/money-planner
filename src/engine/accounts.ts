@@ -3,10 +3,13 @@
 // everything else by date (purchases without a date count too).
 // Savings accounts are outside the balance (spec 2026-10-01-savings-accounts): their balances are kept as
 // every other, but «Всего» and the forecast count only the accounts in the balance (debit, cash, credit).
-import { accountingMonths, addDays, addMonths, clampDay, dateIn, monthStart, ymOf } from './dates';
+import { accountingMonths, addDays, addMonths, clampDay, dateIn, inAccountingYear, monthEnd, monthStart, ymOf } from './dates';
 import type { AccountType, Data, ISODate, Operation, Recurring, Settings, YM } from './model';
 import { opt } from './opt';
-import { journalFact, journalMonth, opAmount, purchaseFact, recurringDate, recurringFact } from './rules';
+import {
+  journalExpected, journalFact, journalMonth, opAmount, purchaseFact, purchasePlan, recurringDate, recurringFact, recurringPlan,
+} from './rules';
+import { balanceCheck, transferFactor } from './transfers';
 
 export interface BalanceRow {
   id: string;
@@ -55,24 +58,6 @@ export interface Movement {
 }
 
 /**
- * Whether a row of account `id` counts in the balance — in «Всего» and in the forecast: every account but a savings
- * one. A row without an account, or of an account that no longer exists, counts in the balance, as in the tracker
- * (its flag is 0 only for a name found among the «Сберегательная» accounts).
- */
-export function inBalance(data: Pick<Data, 'accounts'>, id: string | undefined): boolean {
-  return balanceCheck(data)(id);
-}
-
-/** `inBalance` for many rows: looks the savings accounts up once. */
-export function balanceCheck(data: Pick<Data, 'accounts'>): (id: string | undefined) => boolean {
-  const outside = new Set(data.accounts.filter((a) => a.type === 'savings').map((a) => a.id));
-  return (id) => {
-    const given = opt(id);
-    return given === undefined || !outside.has(given);
-  };
-}
-
-/**
  * How a transfer changes the free money (the forecast): −amount from the balance into savings, +amount out of
  * savings into the balance, 0 inside one group or without «На счёт» (the tracker's Операции U). A transfer without
  * «Со счёта» comes from the balance. An expense or an income: 0 (it is not a transfer).
@@ -82,8 +67,8 @@ export function transferToFree(data: Pick<Data, 'accounts'>, o: Operation): numb
 }
 
 function transferEffect(counts: (id: string | undefined) => boolean, o: Operation): number {
-  if (o.kind !== 'transfer' || opt(o.toAccount) === undefined) return 0;
-  return (Number(counts(o.toAccount)) - Number(counts(o.account))) * opAmount(o);
+  const factor = transferFactor(counts, o);
+  return factor === 0 ? 0 : factor * opAmount(o);
 }
 
 /** A dated move of money between the balance and savings: + into the free money, − out of it. */
@@ -195,15 +180,27 @@ export function creditStatements(data: Data, today: ISODate): CreditStatement[] 
           if (o.account === cc) other -= amount;
         }
       }
+      // a transfer to the card repays it (+), one from the card spends on it (−): both in «Возвраты и переводы»
       for (const r of data.journal) {
-        if (r.account !== cc || !inWindow(r.date)) continue;
-        if (r.kind === 'income') other += journalFact(r);
-        else purchases -= journalFact(r);
+        if (!inWindow(r.date)) continue;
+        const fact = journalFact(r);
+        if (r.kind === 'transfer') {
+          if (r.toAccount === cc) other += fact;
+          if (r.account === cc) other -= fact;
+        } else if (r.account === cc) {
+          if (r.kind === 'income') other += fact;
+          else purchases -= fact;
+        }
       }
       for (const f of recFacts) {
-        if (f.rec.account !== cc || !inWindow(f.date)) continue;
-        if (f.rec.kind === 'income') other += f.fact;
-        else purchases -= f.fact;
+        if (!inWindow(f.date)) continue;
+        if (f.rec.kind === 'transfer') {
+          if (f.rec.toAccount === cc) other += f.fact;
+          if (f.rec.account === cc) other -= f.fact;
+        } else if (f.rec.account === cc) {
+          if (f.rec.kind === 'income') other += f.fact;
+          else purchases -= f.fact;
+        }
       }
       for (const p of data.purchases) {
         if (p.account === cc && inWindow(p.date)) purchases -= purchaseFact(p);
@@ -248,6 +245,101 @@ export function nextCreditDebit(data: Data, today: ISODate): { date: ISODate; am
   return next ? { date: next.payDate, amount: next.payAmount } : null;
 }
 
+/** An automatic repayment of the credit card: «Погашение кредитки: <card> ← <from>». */
+export interface CardRepayment {
+  date: ISODate; // the debit day of a statement
+  amount: number; // the statement's «Сумма списания» (0 when nothing is owed)
+  debited: boolean; // «Списано»: the date has come (≤ today); else «Ожидается»
+  card: string;
+  from?: string; // the account it is paid from (none: no auto-payment is made)
+}
+
+/**
+ * The automatic card repayments of the 12 statements of the accounting year (the tracker's block on
+ * «Запланированные»), shown only when there is a credit card that is paid automatically. For reference only: they
+ * are in no sum — the card's purchases are expenses on their own dates and the balances already count the payments.
+ */
+export function cardRepayments(data: Data, today: ISODate): CardRepayment[] {
+  const card = creditCardId(data);
+  if (card === undefined || !data.credit.auto || !data.accounts.some((a) => a.id === card)) return [];
+  const from = payFromId(data);
+  return creditStatements(data, today).map((st): CardRepayment => ({
+    date: st.payDate,
+    amount: st.payAmount,
+    debited: st.payDate <= today,
+    card,
+    ...(from !== undefined ? { from } : {}),
+  }));
+}
+
+/**
+ * «Погашение кредитки (N-го)» of «Месяц» for month ym: the debit day; the statement amounts debited in that month
+ * (`plan`) and those already debited by today (`fact`). For reference only: in no sum of the month.
+ */
+export function monthCardRepayment(data: Data, ym: YM, today: ISODate): { day: number; plan: number; fact: number } {
+  const from = monthStart(ym);
+  const to = monthEnd(ym);
+  let plan = 0;
+  let fact = 0;
+  for (const st of creditStatements(data, today)) {
+    if (st.payDate < from || st.payDate > to) continue;
+    plan += st.payAmount;
+    fact += st.counted;
+  }
+  return { day: clampDay(data.credit.payDay), plan, fact };
+}
+
+/**
+ * The card spending planned in from..to (inclusive) and not paid yet, net: planned rows without a fact, recurring
+ * payments not marked, purchases not bought — on the card (+); refunds to it and transfers to it (−), from it (+).
+ */
+function unpaidOnCard(data: Data, cc: string, from: ISODate, to: ISODate): number {
+  const s = data.settings;
+  const inWindow = (d: ISODate | undefined): boolean => {
+    const day = opt(d);
+    return day !== undefined && day >= from && day <= to;
+  };
+  /** What a row moves on the card's debt: spending on it +, an income or a transfer to it −. */
+  const onCard = (row: { kind: Operation['kind']; account?: string; toAccount?: string }, amount: number): number => {
+    if (row.kind !== 'transfer') return row.account === cc ? (row.kind === 'income' ? -amount : amount) : 0;
+    return (row.account === cc ? amount : 0) - (row.toAccount === cc ? amount : 0);
+  };
+  let sum = 0;
+  for (const r of data.journal) {
+    if (inWindow(r.date)) sum += onCard(r, journalExpected(r) - journalFact(r));
+  }
+  for (let ym = ymOf(from); ym <= ymOf(to); ym = addMonths(ym, 1)) {
+    for (const rec of data.recurring) {
+      // a mark of an accounting month is a fact (in the statement); otherwise the payment is still to come
+      if (!inWindow(recurringDate(rec, ym)) || (inAccountingYear(ym, s) && rec.marks[ym] !== undefined)) continue;
+      sum += onCard(rec, recurringPlan(rec, ym, s));
+    }
+  }
+  for (const p of data.purchases) {
+    if (!p.bought && p.account === cc && inWindow(p.date)) sum += purchasePlan(p);
+  }
+  return sum;
+}
+
+/**
+ * «Кредиты (погашение кредитки, справочно)» of forecast month ym (spec 2026-10-03-month-limits): what is debited on the
+ * debit day of the month for the statements paid then — their facts (as `creditStatements`) plus the card spending of
+ * their periods planned and not paid yet (`unpaidOnCard`). 0 without auto-payment (`auto` false). For reference only:
+ * in no sum of the forecast — the card's spending is an expense on its own date.
+ */
+export function forecastCardRepayment(data: Data, ym: YM): { day: number; amount: number; auto: boolean } {
+  const cc = creditCardId(data);
+  const auto = cc !== undefined && data.credit.auto && payFromId(data) !== undefined && data.accounts.some((a) => a.id === cc);
+  const day = clampDay(data.credit.payDay);
+  if (!auto) return { day, amount: 0, auto };
+  let amount = 0;
+  for (const st of creditStatements(data, data.settings.balancesDate)) {
+    if (ymOf(st.payDate) !== ym || st.payDate < data.settings.balancesDate) continue;
+    amount += Math.max(0, unpaidOnCard(data, cc, st.from, st.close) - st.debt);
+  }
+  return { day, amount: amount + 0, auto };
+}
+
 export function balances(data: Data, today: ISODate): Balances {
   const s = data.settings;
   const cc = creditCardId(data);
@@ -271,14 +363,24 @@ export function balances(data: Data, today: ISODate): Balances {
       }
     }
     for (const r of data.journal) {
-      if (r.account !== a.id || !monthInBalances(journalMonth(r, s), s)) continue;
-      if (r.kind === 'income') income += journalFact(r);
-      else expense += journalFact(r);
+      if (!monthInBalances(journalMonth(r, s), s)) continue;
+      const fact = journalFact(r);
+      if (r.kind === 'transfer') {
+        if (r.toAccount === a.id) transfers += fact;
+        if (r.account === a.id) transfers -= fact;
+      } else if (r.account === a.id) {
+        if (r.kind === 'income') income += fact;
+        else expense += fact;
+      }
     }
     for (const f of recFacts) {
-      if (f.rec.account !== a.id) continue;
-      if (f.rec.kind === 'income') income += f.fact;
-      else expense += f.fact;
+      if (f.rec.kind === 'transfer') {
+        if (f.rec.toAccount === a.id) transfers += f.fact;
+        if (f.rec.account === a.id) transfers -= f.fact;
+      } else if (f.rec.account === a.id) {
+        if (f.rec.kind === 'income') income += f.fact;
+        else expense += f.fact;
+      }
     }
     for (const p of data.purchases) {
       const date = opt(p.date);
@@ -325,12 +427,17 @@ export function cashAtForecastStart(data: Data, moves = freeMoneyMoves(data)): n
   for (const o of data.operations) {
     if (o.kind !== 'transfer' && inWindow(o.date) && counts(o.account)) cash += signed(o.kind === 'income', opAmount(o));
   }
+  // a transfer moves the free money only across the line to savings (`transferFactor`), whatever its accounts
   for (const r of data.journal) {
     const m = journalMonth(r, s);
-    if (m >= sdMonth && m < fsMonth && counts(r.account)) cash += signed(r.kind === 'income', journalFact(r));
+    if (m < sdMonth || m >= fsMonth) continue;
+    if (r.kind === 'transfer') cash += transferFactor(counts, r) * journalFact(r);
+    else if (counts(r.account)) cash += signed(r.kind === 'income', journalFact(r));
   }
   for (const f of recurringFacts(data)) {
-    if (inWindow(f.date) && counts(f.rec.account)) cash += signed(f.rec.kind === 'income', f.fact);
+    if (!inWindow(f.date)) continue;
+    if (f.rec.kind === 'transfer') cash += transferFactor(counts, f.rec) * f.fact;
+    else if (counts(f.rec.account)) cash += signed(f.rec.kind === 'income', f.fact);
   }
   for (const p of data.purchases) {
     if (inWindow(p.date) && counts(p.account)) cash -= purchaseFact(p);
@@ -365,13 +472,18 @@ export function accountMovements(data: Data, accountId: string, from: ISODate, t
     }
     add({ date: o.date, source: 'operation', id: o.id, what: o.what, amount: value });
   }
+  /** What a row with `fact` moves on this account: a transfer out of it −, into it +; an income +, an expense −. */
+  const moved = (row: { kind: Operation['kind']; account?: string; toAccount?: string }, fact: number): number => {
+    if (row.kind !== 'transfer') return row.account === accountId ? signed(row.kind === 'income', fact) : 0;
+    return (row.toAccount === accountId ? fact : 0) - (row.account === accountId ? fact : 0);
+  };
   for (const r of data.journal) {
-    if (r.account !== accountId || journalMonth(r, s) < sdMonth) continue;
-    add({ date: r.date, source: 'journal', id: r.id, what: r.what, amount: signed(r.kind === 'income', journalFact(r)) });
+    if (journalMonth(r, s) < sdMonth) continue;
+    add({ date: r.date, source: 'journal', id: r.id, what: r.what, amount: moved(r, journalFact(r)) });
   }
   for (const f of recurringFacts(data)) {
-    if (f.rec.account !== accountId || f.date < sd) continue;
-    add({ date: f.date, source: 'recurring', id: f.rec.id, ym: f.ym, what: f.rec.what, amount: signed(f.rec.kind === 'income', f.fact) });
+    if (f.date < sd) continue;
+    add({ date: f.date, source: 'recurring', id: f.rec.id, ym: f.ym, what: f.rec.what, amount: moved(f.rec, f.fact) });
   }
   for (const p of data.purchases) {
     const date = opt(p.date);

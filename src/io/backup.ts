@@ -33,6 +33,13 @@ const SHEET = {
   recurring: 'Постоянные', marks: 'Отметки', purchases: 'Покупки', debts: 'Долги', schema: '_schema',
 } as const;
 
+/**
+ * The own month limits of the expense categories (spec 2026-10-03-month-limits): a row per category and month, after
+ * «Категории». A copy made before it has no such sheet and restores without month limits (format version 1 both).
+ */
+const MONTH_LIMITS_SHEET = 'Лимиты по месяцам';
+const MONTH_LIMITS_COLUMNS = { category: 'Категория', month: 'Месяц', limit: 'Лимит' } as const;
+
 /** The journal sheet of a copy made before the tracker sheet «Журнал» was renamed «Запланированные» (format version 1 both). */
 const OLD_JOURNAL_SHEET = 'Журнал';
 
@@ -56,11 +63,11 @@ const COLUMN = {
   },
   journal: {
     id: 'id', date: 'Дата', kind: 'Тип', category: 'Категория', what: 'Что', plan: 'План', fact: 'Факт', status: 'Статус',
-    account: 'Счёт (id)', priority: 'Приоритет', month: 'Месяц учёта',
+    account: 'Счёт (id)', priority: 'Приоритет', month: 'Месяц учёта', toAccount: 'На счёт (id)',
   },
   recurring: {
     id: 'id', what: 'Что', kind: 'Тип', category: 'Категория', day: 'День', amount: 'Сумма', every: 'Раз в N мес.',
-    from: 'Действует с', to: 'по', account: 'Счёт (id)',
+    from: 'Действует с', to: 'по', account: 'Счёт (id)', toAccount: 'На счёт (id)',
   },
   marks: { id: 'id постоянного', month: 'Месяц', mark: 'Отметка' },
   purchases: {
@@ -72,7 +79,7 @@ const COLUMN = {
     nextDate: 'След. платёж',
   },
 } as const satisfies {
-  categories: Record<'kind' | keyof ExpenseCategory, string>;
+  categories: Record<'kind' | Exclude<keyof ExpenseCategory, 'monthLimits'>, string>;
   accounts: Record<keyof Account, string>;
   operations: Record<keyof Operation, string>;
   journal: Record<keyof JournalRow, string>;
@@ -83,6 +90,12 @@ const COLUMN = {
 };
 const ACCOUNT_NAME = 'Счёт (название)';
 const TO_ACCOUNT_NAME = 'На счёт (название)';
+
+/**
+ * Columns a copy made before them does not have (planned and recurring transfers, spec 2026-10-01-planned-transfers):
+ * their cells read as empty. They are written after every column such a copy has, so the format version stays 1.
+ */
+const ADDED_LATER = { journal: [COLUMN.journal.toAccount], recurring: [COLUMN.recurring.toAccount] } as const;
 
 export function backupFilename(today: ISODate): string {
   return `Трекер расходов — копия ${today}.xlsx`;
@@ -130,8 +143,8 @@ function sanitise<T>(value: T): T {
 const OPTIONAL_TEXT = {
   credit: ['accountId', 'fromAccountId'],
   operations: ['category', 'account', 'toAccount'],
-  journal: ['category', 'account', 'priority', 'month'],
-  recurring: ['category', 'from', 'to', 'account'],
+  journal: ['category', 'account', 'priority', 'month', 'toAccount'],
+  recurring: ['category', 'from', 'to', 'account', 'toAccount'],
   purchases: ['category', 'date', 'priority', 'account'],
   debts: ['whom', 'nextDate'],
 } as const satisfies {
@@ -158,6 +171,12 @@ function restorable(input: Data): Data {
     recurring: d.recurring.map((r) => withoutEmpty(r, OPTIONAL_TEXT.recurring)),
     purchases: d.purchases.map((r) => withoutEmpty(r, OPTIONAL_TEXT.purchases)),
     debts: d.debts.map((r) => withoutEmpty(r, OPTIONAL_TEXT.debts)),
+    // no own month limits: no rows, so the copy gives the category back without them
+    categories: {
+      ...d.categories,
+      expense: d.categories.expense.map(({ monthLimits, ...c }) =>
+        monthLimits !== undefined && Object.keys(monthLimits).length > 0 ? { ...c, monthLimits } : c),
+    },
   };
 }
 
@@ -237,6 +256,16 @@ async function writeBackup(data: Data, exportedAt: string, opts: ExportOptions):
     ...data.categories.income.map((c): CategoryRow => ({ kind: 'income', ...c })),
   ]);
 
+  // in the order of the categories, each one's months in calendar order (see readMonthLimits)
+  type MonthLimitRow = { category: string; month: YM; limit: number };
+  const L = MONTH_LIMITS_COLUMNS;
+  addSheet<MonthLimitRow>(wb, MONTH_LIMITS_SHEET, [
+    col(L.category, 28, (r) => r.category),
+    col(L.month, 10, (r) => r.month),
+    money(L.limit, (r) => r.limit),
+  ], data.categories.expense.flatMap((c) => Object.keys(c.monthLimits ?? {}).sort()
+    .map((month): MonthLimitRow => ({ category: c.name, month, limit: c.monthLimits?.[month] ?? 0 }))));
+
   const A = COLUMN.accounts;
   addSheet<Account>(wb, SHEET.accounts, [
     col(A.id, 38, (r) => r.id),
@@ -273,6 +302,8 @@ async function writeBackup(data: Data, exportedAt: string, opts: ExportOptions):
     col(J.priority, 16, (r) => r.priority),
     col(J.month, 12, (r) => r.month),
     col(ACCOUNT_NAME, 20, (r) => accountName(r.account)),
+    col(J.toAccount, 38, (r) => r.toAccount),
+    col(TO_ACCOUNT_NAME, 20, (r) => accountName(r.toAccount)),
   ], data.journal);
 
   const R = COLUMN.recurring;
@@ -288,6 +319,8 @@ async function writeBackup(data: Data, exportedAt: string, opts: ExportOptions):
     day(R.to, (r) => r.to),
     col(R.account, 38, (r) => r.account),
     col(ACCOUNT_NAME, 20, (r) => accountName(r.account)),
+    col(R.toAccount, 38, (r) => r.toAccount),
+    col(TO_ACCOUNT_NAME, 20, (r) => accountName(r.toAccount)),
   ], data.recurring);
 
   type MarkRow = { id: string; month: YM; mark: Mark };
@@ -397,6 +430,7 @@ function locate(data: Data, path: Path): string {
     const params: Record<string, string> = PARAM[list];
     return i === undefined ? place(SHEET.settings, undefined) : `лист «${SHEET.settings}», параметр «${params[i] ?? i}»`;
   }
+  if (list === 'categories' && key === 'monthLimits') return place(MONTH_LIMITS_SHEET, undefined);
   if (list === 'categories') {
     const first = i === 'income' ? data.categories.expense.length : 0;
     return place(SHEET.categories, row(field, first), header(COLUMN.categories, key));
@@ -557,7 +591,7 @@ class Row {
 }
 
 const ALL_KINDS: readonly OpKind[] = ['expense', 'income', 'transfer'];
-const ROW_KINDS: readonly ('expense' | 'income')[] = ['expense', 'income'];
+const ROW_KINDS: readonly ('expense' | 'income')[] = ['expense', 'income']; // categories
 const STATUSES = Object.keys(JOURNAL_STATUS_LABEL) as JournalStatus[];
 const ACCOUNT_TYPES = Object.keys(ACCOUNT_TYPE_LABEL) as AccountType[];
 const rowKind = (text: string | undefined): 'expense' | 'income' | undefined => {
@@ -579,14 +613,17 @@ function uniqueId(r: Row, header: string, seen: Map<string, number>): string {
   return unique(r, id, seen, `id «${id}»`);
 }
 
-/** The non-blank rows below the header of a sheet, with the values of the `columns`. */
-function rowsOf(ws: Worksheet, columns: Record<string, string>): Row[] {
-  const headers = Object.values(columns);
+/**
+ * The non-blank rows below the header of a sheet, with the values of the `columns`. A column of `optional` (one a copy
+ * made before it lacks, ADDED_LATER) may be missing: its cells are empty.
+ */
+function rowsOf(ws: Worksheet, columns: Record<string, string>, optional: readonly string[] = []): Row[] {
   const numbers = new Map<string, number>();
   ws.getRow(1).eachCell((cell, n) => {
     const header = cellText(cell.value);
     if (header !== undefined && !numbers.has(header)) numbers.set(header, n);
   });
+  const headers = Object.values(columns).filter((h) => numbers.has(h) || !optional.includes(h));
   for (const header of headers) {
     if (!numbers.has(header)) throw new BackupError(`Лист «${ws.name}»: нет столбца «${header}».`);
   }
@@ -651,6 +688,31 @@ function readSettings(ws: Worksheet): { settings: Settings; credit: CreditSettin
   };
 }
 
+/**
+ * The rows of «Лимиты по месяцам» into the expense categories by name. Several categories may share a name (an imported
+ * tracker); the copy lists each one's months in calendar order, in the order of the categories, so for such a name a
+ * month not after the previous row's belongs to the next category of that name.
+ */
+function readMonthLimits(ws: Worksheet, expense: ExpenseCategory[]): void {
+  const L = MONTH_LIMITS_COLUMNS;
+  const byName = new Map<string, ExpenseCategory[]>();
+  for (const c of expense) byName.set(c.name, [...(byName.get(c.name) ?? []), c]);
+  const previous = new Map<string, { k: number; month: YM }>();
+  const seen = new Map<string, number>();
+  for (const r of rowsOf(ws, L)) {
+    const name = r.text(L.category) ?? '';
+    const month = r.reqMonth(L.month);
+    const limit = r.reqNum(L.limit);
+    const same = byName.get(name) ?? r.fail(`неизвестная категория расходов «${name}»`);
+    const prev = previous.get(name);
+    const k = prev === undefined ? 0 : Math.min(same.length - 1, month <= prev.month ? prev.k + 1 : prev.k);
+    previous.set(name, { k, month });
+    unique(r, `${k} ${name} ${month}`, seen, `лимит «${name}» за ${month}`);
+    const target = same[k]!;
+    target.monthLimits = { ...target.monthLimits, [month]: limit };
+  }
+}
+
 /** The sheet of the journal rows under either of its names; a copy that has both cannot be told apart. */
 function journalSheet(wb: Workbook): Worksheet | undefined {
   const current = wb.getWorksheet(SHEET.journal);
@@ -684,6 +746,8 @@ export async function importBackup(buf: ArrayBuffer): Promise<Data> {
     if (kind === 'expense') categories.expense.push(compact({ name, limit: r.num(K.limit) }));
     else categories.income.push({ name });
   }
+  const monthLimits = wb.getWorksheet(MONTH_LIMITS_SHEET);
+  if (monthLimits) readMonthLimits(monthLimits, categories.expense);
 
   // ids are unique within each list (another list may use the same id)
   const A = COLUMN.accounts;
@@ -710,10 +774,10 @@ export async function importBackup(buf: ArrayBuffer): Promise<Data> {
 
   const J = COLUMN.journal;
   const journalRows = new Map<string, number>();
-  const journal = rowsOf(sheet(SHEET.journal), J).map((r): JournalRow => compact({
+  const journal = rowsOf(sheet(SHEET.journal), J, ADDED_LATER.journal).map((r): JournalRow => compact({
     id: uniqueId(r, J.id, journalRows),
     date: r.reqDate(J.date),
-    kind: r.reqLabel(J.kind, rowKind, ROW_KINDS),
+    kind: r.reqLabel(J.kind, parseKind, ALL_KINDS),
     category: r.text(J.category),
     what: r.text(J.what) ?? '',
     plan: r.num(J.plan),
@@ -722,14 +786,15 @@ export async function importBackup(buf: ArrayBuffer): Promise<Data> {
     account: r.trimmed(J.account),
     priority: r.text(J.priority),
     month: r.month(J.month),
+    toAccount: r.trimmed(J.toAccount),
   }));
 
   const R = COLUMN.recurring;
   const recurringRows = new Map<string, number>(); // id → row: marks refer to recurring payments by id
-  const recurring = rowsOf(sheet(SHEET.recurring), R).map((r): Recurring => compact({
+  const recurring = rowsOf(sheet(SHEET.recurring), R, ADDED_LATER.recurring).map((r): Recurring => compact({
     id: uniqueId(r, R.id, recurringRows),
     what: r.text(R.what) ?? '',
-    kind: r.reqLabel(R.kind, rowKind, ROW_KINDS),
+    kind: r.reqLabel(R.kind, parseKind, ALL_KINDS),
     category: r.text(R.category),
     day: r.int(R.day, 1, 31),
     amount: r.reqNum(R.amount),
@@ -737,6 +802,7 @@ export async function importBackup(buf: ArrayBuffer): Promise<Data> {
     from: r.date(R.from),
     to: r.date(R.to),
     account: r.trimmed(R.account),
+    toAccount: r.trimmed(R.toAccount),
     marks: {},
   }));
 

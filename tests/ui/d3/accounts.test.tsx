@@ -304,13 +304,18 @@ describe('«Счета»: warnings', () => {
       'Постоянных платежей с отметками, но без дня: 1. Без даты они не попадают в остатки — укажите день.',
     ]);
     const [unassigned, transfers] = Array.from(document.querySelectorAll<HTMLElement>('.banner'));
-    // «без счёта» opens «Лента» filtered to those rows (as «Сегодня» does); the others open it as it is
+    // «без счёта» opens «Лента» filtered to those rows (as «Сегодня» does), a transfer without «На счёт» to the rows
+    // with a check of a transfer; the others open it as it is
     fireEvent.click(within(unassigned!).getByRole('button', { name: 'Открыть ленту' }));
     expect(tab.value).toBe('feed');
     expect(feedCheck.value).toBe('unassigned');
     tab.value = 'accounts';
     fireEvent.click(within(transfers!).getByRole('button', { name: 'Открыть ленту' }));
     expect(tab.value).toBe('feed');
+    expect(feedCheck.value).toBe('transfers');
+    tab.value = 'accounts';
+    const deleted = Array.from(document.querySelectorAll<HTMLElement>('.banner'))[2];
+    fireEvent.click(within(deleted!).getByRole('button', { name: 'Открыть ленту' }));
     expect(feedCheck.value).toBeNull();
   });
 

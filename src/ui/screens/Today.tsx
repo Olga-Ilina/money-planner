@@ -46,7 +46,7 @@ export function summaryMonth(s: Settings, todayDate: ISODate): { ym: YM; current
   return { ym: ym < first ? first : last, current: false };
 }
 
-export type Check = 'unassigned' | 'duplicates' | 'boughtWithoutDate' | 'outOfYear';
+export type Check = 'unassigned' | 'duplicates' | 'transfers' | 'boughtWithoutDate' | 'outOfYear';
 
 export interface CheckRow {
   check: Check;
@@ -56,9 +56,10 @@ export interface CheckRow {
 
 /**
  * The rows of «Проверьте записи», only the checks that found something. Each counts what the place it opens
- * can show: paid without an account and the possible duplicates — the rows «Лента» shows filtered to them
- * over the 12 accounting months; bought purchases without a date («Лента» has no month for them) —
- * «Покупки»; journal rows and operations outside the accounting year — «Учёт и прогноз».
+ * can show: paid without an account, the possible duplicates and the checks of transfers (no «На счёт», the same
+ * account, an income to savings; each record once) — the rows «Лента» shows filtered to them over the 12 accounting
+ * months; bought purchases without a date («Лента» has no month for them) — «Покупки»; journal rows and operations
+ * outside the accounting year — «Учёт и прогноз».
  */
 export function checkRows(d: Data): CheckRow[] {
   const w = warnings(d);
@@ -66,6 +67,7 @@ export function checkRows(d: Data): CheckRow[] {
   const rows: CheckRow[] = [
     { check: 'unassigned', title: 'Оплачено без счёта', count: feed.unassigned },
     { check: 'duplicates', title: 'Возможные дубли', count: feed.duplicates },
+    { check: 'transfers', title: 'Проверьте переводы', count: feed.transfers },
     { check: 'boughtWithoutDate', title: 'Куплено без даты', count: w.boughtWithoutDate },
     { check: 'outOfYear', title: 'Вне учётного года', count: w.outOfYear },
   ];
@@ -87,19 +89,21 @@ export function debitLine(next: { date: ISODate; amount: number } | null, day: I
 /**
  * Whether paying `item` in one tap would leave out what paying needs, so ✓ opens its card instead: a
  * purchase needs an account and a price (or a cost) above 0, a journal row or a recurring payment an
- * account (paid without one, the money reaches no balance) — an account that was deleted is as good as
- * none. A record that is gone opens the card too.
+ * account (paid without one, the money reaches no balance), a transfer also «На счёт» — an account that was
+ * deleted is as good as none. A record that is gone opens the card too.
  */
 export function needsCard(d: Data, item: UpcomingItem): boolean {
   const noAccount = (id: string | undefined) => knownAccount(d, opt(id)) === undefined;
+  const lacks = (r: { kind: string; account?: string; toAccount?: string }) =>
+    noAccount(r.account) || (r.kind === 'transfer' && noAccount(r.toAccount));
   switch (item.source) {
     case 'journal': {
       const r = d.journal.find((x) => x.id === item.id);
-      return !r || noAccount(r.account);
+      return !r || lacks(r);
     }
     case 'recurring': {
       const rec = d.recurring.find((x) => x.id === item.id);
-      return !rec || noAccount(rec.account);
+      return !rec || lacks(rec);
     }
     case 'purchase': {
       const p = d.purchases.find((x) => x.id === item.id);
@@ -119,13 +123,18 @@ const SOURCE_ICON: Record<UpcomingItem['source'], IconName> = {
 function checkLabel(item: UpcomingItem): string {
   const what = item.what || 'без названия';
   if (item.source === 'purchase') return `Отметить покупку: ${what}`;
+  if (item.kind === 'transfer') return `Отметить перевод: ${what}`;
   return item.kind === 'income' ? `Отметить поступление: ${what}` : `Отметить оплату: ${what}`;
 }
 
-/** The toast after ✓: a recurring tick is «Отмечено» (as on its card and in its form), a purchase «Куплено». */
+/**
+ * The toast after ✓: a recurring tick is «Отмечено» (as on its card and in its form), a purchase «Куплено», a planned
+ * transfer «Переведено».
+ */
 function paidMessage(item: UpcomingItem): string {
   if (item.source === 'recurring') return 'Отмечено';
   if (item.source === 'purchase') return 'Куплено';
+  if (item.kind === 'transfer') return 'Переведено';
   return item.kind === 'income' ? 'Получено' : 'Оплачено';
 }
 
@@ -155,7 +164,7 @@ function UpcomingRow({ item, todayDate }: { item: UpcomingItem; todayDate: ISODa
         item.overdue ? <span class="tone-red">{`${formatDay(item.date)} · просрочено`}</span> : dayText(item.date, todayDate)
       }
       value={<Money value={item.amount} tone="plain" signed={income} />}
-      valueTone={income ? 'green' : 'default'}
+      valueTone={income ? 'green' : item.kind === 'transfer' ? 'muted' : 'default'}
       onClick={open}
       trailing={
         <button type="button" class="icon-button today-check" aria-label={checkLabel(item)} onClick={pay}>

@@ -14,10 +14,11 @@ describe('engine public API', () => {
       'recurringDue', 'recurringDate', 'recurringPlan', 'recurringFact', 'recurringExpected',
       'purchasePlan', 'purchaseFact', 'purchaseExpected', 'opAmount', 'opt',
       'duplicatesForJournal', 'duplicatesForOperation',
-      'monthSummary', 'dailySpend', 'yearStats',
+      'monthSummary', 'dailySpend', 'yearStats', 'limitFor', 'categoryExpected',
       'balances', 'creditStatements', 'nextCreditDebit', 'cashAtForecastStart', 'accountMovements',
       'creditCardId', 'payFromId', 'inBalance', 'transferToFree', 'freeMoneyTransfers',
-      'forecast', 'upcoming', 'markPaid', 'warnings',
+      'balanceCheck', 'freeMoneyFactor', 'transferFactor', 'rowCheck', 'cardRepayments', 'monthCardRepayment', 'forecastCardRepayment',
+      'forecast', 'limitReserve', 'upcoming', 'markPaid', 'warnings',
       'monthItems',
       'roundCents', 'monthlyAverage', 'purchaseStatus', 'leftToSave', 'debtLeft', 'debtStatus', 'isDebtOpen',
     ];

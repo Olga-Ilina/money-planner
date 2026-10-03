@@ -1,6 +1,6 @@
 // Rules of the tracker's plan sheets that the screens show: «Постоянные» (the average per month),
 // «Покупки» («Хватит ли денег», «Осталось накопить») and «Долги» (what is left, the status).
-import { inBalance } from './accounts';
+import { inBalance } from './transfers';
 import type { Forecast } from './forecast';
 import type { Data, Debt, Purchase, Recurring } from './model';
 import { roundCents } from './money';

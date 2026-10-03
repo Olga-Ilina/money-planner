@@ -1,9 +1,14 @@
-// A planned expense or income — a journal row (spec §3, §5): kind, category, what, date, plan, fact,
-// status, account, priority and the accounting month. openSheet('journal', {initial?, preset?}).
+// A planned expense, income or transfer — a journal row (spec §3, §5; transfers: spec 2026-10-01-planned-transfers):
+// kind, category, what, date, plan, fact, status, account («Со счёта» and «На счёт» for a transfer, which has no
+// category), priority and the accounting month. openSheet('journal', {initial?, preset?}).
 // Validation: «Что» and the date are required; a plan or a fact that is not zero (a refund is a negative
-// amount, in the plan or in the fact) unless the row is cancelled. Editing adds «Удалить» (asked first, undoable).
+// amount, in the plan or in the fact) unless the row is cancelled; a transfer needs «Со счёта» and another «На счёт».
+// «Доход» on a savings account shows the tracker's hint «Похоже на перевод…». Editing adds «Удалить» (asked first, undoable).
 import { useState } from 'preact/hooks';
-import { JOURNAL_STATUS_LABEL, KIND_LABEL, PRIORITIES, accountingMonthOf, accountingMonths, journalMonth, monthInBalances, monthLabel, newId, ymOf } from '../../engine';
+import {
+  JOURNAL_STATUS_LABEL, KIND_LABEL, PRIORITIES, accountingMonthOf, accountingMonths, journalMonth, monthInBalances, monthLabel, newId,
+  ymOf,
+} from '../../engine';
 import type { Data, ISODate, JournalRow, JournalStatus, YM } from '../../engine';
 import { actions } from '../actions';
 import {
@@ -11,7 +16,7 @@ import {
 } from '../kit';
 import type { Option } from '../kit';
 import { accountName, appData, today } from '../state';
-import { outsideYearNote, showInFeed } from './planForm';
+import { outsideYearNote, showInFeed, transferErrors, transferHint } from './planForm';
 import './JournalForm.css';
 
 export interface JournalFormProps {
@@ -33,6 +38,7 @@ export interface JournalDraft {
   fact?: number;
   status?: JournalStatus;
   account?: string;
+  toAccount?: string;
   priority?: string;
   month?: YM;
 }
@@ -41,6 +47,8 @@ export interface JournalErrors {
   what?: string;
   date?: string;
   amount?: string;
+  account?: string;
+  toAccount?: string;
 }
 
 /** The status a journal row counts with: an empty status is «paid» once a fact is entered (as in the tracker). */
@@ -53,7 +61,7 @@ export function defaultAccountId(d: Data): string | undefined {
   return (d.accounts.find((a) => a.type === 'debit') ?? d.accounts.find((a) => a.type !== 'credit') ?? d.accounts[0])?.id;
 }
 
-const KINDS: Option<Kind>[] = (['expense', 'income'] as const).map((k) => ({ value: k, label: KIND_LABEL[k] }));
+const KINDS: Option<Kind>[] = (['expense', 'income', 'transfer'] as const).map((k) => ({ value: k, label: KIND_LABEL[k] }));
 
 const MONTH_NOTE =
   'Месяц учёта — если запись относится к другому месяцу, чем её дата (например, зарплата 30-го за следующий месяц).';
@@ -66,25 +74,32 @@ const STATUSES: Option<JournalStatus>[] = (['planned', 'paid', 'postponed', 'can
   label: JOURNAL_STATUS_LABEL[s],
 }));
 
-/** «Что» and the date are required; a plan or a fact that is not zero (a refund is negative), unless cancelled. */
+/**
+ * «Что» and the date are required; a plan or a fact that is not zero (a refund is negative), unless cancelled; a
+ * transfer needs «Со счёта» and a different «На счёт».
+ */
 export function validateJournal(d: JournalDraft): JournalErrors {
   const errors: JournalErrors = {};
   if (!d.what?.trim()) errors.what = 'Введите название';
   if (!d.date) errors.date = 'Укажите дату';
   const hasAmount = (d.plan !== undefined && d.plan !== 0) || (d.fact !== undefined && d.fact !== 0);
   if (!hasAmount && d.status !== 'cancelled') errors.amount = 'Укажите план или факт';
-  return errors;
+  return { ...errors, ...transferErrors(d) };
 }
 
-/** The row to store: only the fields that are set; the month only when it differs from the date's. */
+/**
+ * The row to store: only the fields that are set; the month only when it differs from the date's. A transfer keeps
+ * «На счёт» and no category; another kind no «На счёт».
+ */
 export function journalFromDraft(d: JournalDraft, id: string): JournalRow {
   const date = d.date ?? '';
   const row: JournalRow = { id, date, kind: d.kind, what: (d.what ?? '').trim() };
-  if (d.category !== undefined) row.category = d.category;
+  if (d.category !== undefined && d.kind !== 'transfer') row.category = d.category;
   if (d.plan !== undefined) row.plan = d.plan;
   if (d.fact !== undefined) row.fact = d.fact;
   if (d.status !== undefined) row.status = d.status;
   if (d.account !== undefined) row.account = d.account;
+  if (d.toAccount !== undefined && d.kind === 'transfer') row.toAccount = d.toAccount;
   if (d.priority !== undefined) row.priority = d.priority;
   if (d.month !== undefined && d.month !== ymOf(date)) row.month = d.month;
   return row;
@@ -114,6 +129,7 @@ function startDraft(d: Data, initial: JournalRow | undefined, preset: Partial<Jo
       fact: initial.fact,
       status: initial.status,
       account: given(initial.account),
+      toAccount: given(initial.toAccount),
       priority: given(initial.priority),
       month: given(initial.month),
     };
@@ -127,6 +143,7 @@ function startDraft(d: Data, initial: JournalRow | undefined, preset: Partial<Jo
     fact: preset?.fact,
     status: preset?.status,
     account: given(preset?.account) ?? defaultAccountId(d),
+    toAccount: given(preset?.toAccount),
     priority: given(preset?.priority),
     month: given(preset?.month),
   };
@@ -149,12 +166,13 @@ export function JournalForm({ open, onClose, initial, preset }: JournalFormProps
   // an empty status is shown as what it counts as (paid once a fact is entered)
   const shownStatus = journalStatus(draft);
 
-  const names = (draft.kind === 'expense' ? d.categories.expense : d.categories.income).map((c) => c.name);
+  const transfer = draft.kind === 'transfer';
+  const names = (draft.kind === 'income' ? d.categories.income : d.categories.expense).map((c) => c.name);
   const categories = withCurrent(names.map((n) => ({ value: n, label: n })), draft.category);
   const priorities = withCurrent(PRIORITIES.map((p) => ({ value: p as string, label: p })), draft.priority);
-  const accounts = withCurrent(
+  const accountChoices = (current: string | undefined) => withCurrent(
     d.accounts.map((a) => ({ value: a.id, label: a.name })),
-    draft.account,
+    current,
     (id) => accountName(d, id),
   );
   const months = withCurrent(
@@ -164,9 +182,10 @@ export function JournalForm({ open, onClose, initial, preset }: JournalFormProps
   );
 
   // a category of the old kind's list does not carry over (unless the new list has it too); one that is in
-  // neither list (renamed, deleted) is kept: the form must not silently rewrite it
+  // neither list (renamed, deleted) is kept: the form must not silently rewrite it (a transfer has no category: its
+  // list is the expenses' as in the tracker, and the category is not saved with it)
   const changeKind = (kind: Kind) => {
-    const names = (k: Kind) => (k === 'expense' ? d.categories.expense : d.categories.income).map((c) => c.name);
+    const names = (k: Kind) => (k === 'income' ? d.categories.income : d.categories.expense).map((c) => c.name);
     const category = draft.category;
     const drop = category !== undefined && names(draft.kind).includes(category) && !names(kind).includes(category);
     setDraft((prev) => ({ ...prev, kind, category: drop ? undefined : prev.category }));
@@ -224,13 +243,15 @@ export function JournalForm({ open, onClose, initial, preset }: JournalFormProps
             placeholder="Например, врач"
             error={errors.what}
           />
-          <SelectField
-            label="Категория"
-            value={draft.category}
-            options={categories}
-            placeholder="Без категории"
-            onChange={setter('category')}
-          />
+          {!transfer && (
+            <SelectField
+              label="Категория"
+              value={draft.category}
+              options={categories}
+              placeholder="Без категории"
+              onChange={setter('category')}
+            />
+          )}
           <DateField
             label="Дата"
             value={draft.date}
@@ -257,13 +278,35 @@ export function JournalForm({ open, onClose, initial, preset }: JournalFormProps
           <SelectField label="Статус" value={shownStatus} options={STATUSES} onChange={setter('status')} />
         </Section>
         <Section footer={MONTH_NOTE}>
-          <SelectField
-            label="Счёт"
-            value={draft.account}
-            options={accounts}
-            placeholder="Без счёта"
-            onChange={setter('account')}
-          />
+          {transfer ? (
+            <>
+              <SelectField
+                label="Со счёта"
+                value={draft.account}
+                options={accountChoices(draft.account)}
+                placeholder="Не выбран"
+                onChange={setter('account')}
+                error={errors.account}
+              />
+              <SelectField
+                label="На счёт"
+                value={draft.toAccount}
+                options={accountChoices(draft.toAccount)}
+                placeholder="Не выбран"
+                onChange={setter('toAccount')}
+                error={errors.toAccount}
+              />
+            </>
+          ) : (
+            <SelectField
+              label="Счёт"
+              value={draft.account}
+              options={accountChoices(draft.account)}
+              placeholder="Без счёта"
+              onChange={setter('account')}
+              hint={transferHint(d, draft.kind, draft.account)}
+            />
+          )}
           <SelectField
             label="Приоритет"
             value={draft.priority}

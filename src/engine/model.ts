@@ -18,7 +18,8 @@ export interface Settings {
 
 export interface ExpenseCategory {
   name: string;
-  limit?: number;
+  limit?: number; // «Обычный лимит»: every month without its own value
+  monthLimits?: Record<YM, number>; // a month's own limit, by calendar month (spec 2026-10-03-month-limits)
 }
 
 export interface Categories {
@@ -59,13 +60,14 @@ export type JournalStatus = 'planned' | 'paid' | 'postponed' | 'cancelled';
 export interface JournalRow {
   id: string;
   date: ISODate;
-  kind: 'expense' | 'income';
+  kind: OpKind; // a transfer moves money from `account` («Со счёта») to `toAccount`: not income, not an expense
   category?: string;
   what: string;
   plan?: number;
   fact?: number;
   status?: JournalStatus;
   account?: string;
+  toAccount?: string; // transfers only («На счёт»)
   priority?: string;
   month?: YM; // accounting month when it differs from the month of the date
 }
@@ -75,7 +77,7 @@ export type Mark = '✓' | number;
 export interface Recurring {
   id: string;
   what: string;
-  kind: 'expense' | 'income';
+  kind: OpKind; // a transfer: from `account` to `toAccount`, as a journal row
   category?: string;
   day?: number;
   amount: number;
@@ -83,6 +85,7 @@ export interface Recurring {
   from?: ISODate;
   to?: ISODate;
   account?: string;
+  toAccount?: string; // transfers only («На счёт»)
   marks: Record<YM, Mark>;
 }
 

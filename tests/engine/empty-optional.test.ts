@@ -7,11 +7,13 @@ import {
   accountingMonths,
   addMonths,
   balances,
+  cardRepayments,
   cashAtForecastStart,
   creditCardId,
   creditStatements,
   dailySpend,
   forecast,
+  monthCardRepayment,
   monthItems,
   monthSummary,
   nextCreditDebit,
@@ -29,8 +31,8 @@ import { ACC, scenario, zpNovember, zpOctober } from './scenario';
 // ── Every optional id / date / month field of the model (src/engine/model.ts) ──────────────
 const OPTIONAL_FIELDS = {
   operations: ['account', 'toAccount', 'category'],
-  journal: ['month', 'account', 'category'],
-  recurring: ['from', 'to', 'account', 'category'],
+  journal: ['month', 'account', 'toAccount', 'category'],
+  recurring: ['from', 'to', 'account', 'toAccount', 'category'],
   purchases: ['date', 'account', 'category'],
   debts: ['nextDate'],
 } as const;
@@ -66,6 +68,8 @@ function richScenario(): Data {
     { id: 'j-kredit', date: '2026-10-03', kind: 'expense', category: 'Продукты', what: 'Кредитка расход', fact: 60, status: 'paid', account: ACC.credit },
     { id: 'j-kredit-bez', date: '2026-10-02', kind: 'expense', what: 'Кредитка без категории', fact: 12, status: 'paid', account: ACC.credit },
     { id: 'j-mesyac', date: '2026-10-31', kind: 'expense', category: 'Продукты', what: 'Другой месяц', plan: 25, status: 'paid', account: ACC.card, month: '2026-11' },
+    { id: 'j-perevod-bez-celi', date: '2026-10-18', kind: 'transfer', what: 'Перевод без цели', plan: 30, status: 'paid', account: ACC.card },
+    { id: 'j-perevod-na-kredit', date: '2026-10-19', kind: 'transfer', what: 'На кредитку', plan: 20, account: ACC.cash, toAccount: ACC.credit },
   );
   d.operations.push(
     { id: 'o-bez-scheta', date: '2026-10-22', kind: 'expense', what: 'Без счёта', amount: 15 },
@@ -80,6 +84,7 @@ function richScenario(): Data {
     { id: 'r-kvartal', what: 'Раз в квартал', kind: 'expense', category: 'Подписки', day: 7, amount: 45, every: 3, account: ACC.cash, marks: {} },
     { id: 'r-bez-dnya', what: 'Без дня', kind: 'income', amount: 50, marks: { '2026-11': '✓' } },
     { id: 'r-kredit', what: 'Кредитка', kind: 'expense', day: 3, amount: 9, account: ACC.credit, marks: { '2026-10': '✓', '2026-11': 12 } },
+    { id: 'r-perevod', what: 'Перевод без счетов', kind: 'transfer', day: 9, amount: 11, marks: { '2026-10': '✓' } },
   );
   d.purchases.push(
     { id: 'p-bez-daty', what: 'Куплено без даты', bought: true, cost: 60, price: 55, account: ACC.card },
@@ -117,6 +122,8 @@ const PARTS: [string, Part][] = [
   ['monthItems of every month around the year', (d) => months(d).map((m) => monthItems(d, m))],
   ['upcoming', (d) => TODAYS.map((t) => upcoming(d, t, 30))],
   ['warnings', warnings],
+  ['cardRepayments', (d) => TODAYS.map((t) => cardRepayments(d, t))],
+  ['monthCardRepayment of every accounting month', (d) => accountingMonths(d.settings).map((m) => monthCardRepayment(d, m, TODAYS[1]))],
   [
     'accountMovements of every account',
     (d) => TODAYS.flatMap((t) => d.accounts.map((a) => accountMovements(d, a.id, '2026-09-01', '2027-12-31', t))),
@@ -143,6 +150,8 @@ describe.each(CREDIT_VARIANTS)("'' in optional fields equals not set (%s)", (_na
     expect(empty.recurring.find((r) => r.id === 'r-bez-scheta')).toMatchObject({ from: '', to: '', account: '', category: '' });
     expect(empty.purchases.find((p) => p.id === 'p-mechta')).toMatchObject({ date: '', account: '', category: '' });
     expect(empty.journal.find((r) => r.id === 'j-bez-scheta')).toMatchObject({ month: '', account: '', category: '' });
+    expect(empty.journal.find((r) => r.id === 'j-perevod-bez-celi')).toMatchObject({ toAccount: '' });
+    expect(empty.recurring.find((r) => r.id === 'r-perevod')).toMatchObject({ account: '', toAccount: '' });
     expect(empty.operations.find((o) => o.id === 'o-bez-celi')).toMatchObject({ toAccount: '', category: '' });
     expect(empty.debts[0]).toMatchObject({ nextDate: '' });
   });

@@ -2,8 +2,8 @@
 // rename or a removal must reach every row that uses the name — in the same new Data object (one
 // commit, one undo). Never in place: every function returns a new Data (or the same one when nothing
 // changes).
-import { opt } from '../../engine';
-import type { Data, ExpenseCategory } from '../../engine';
+import { inAccountingYear, opt } from '../../engine';
+import type { Data, ExpenseCategory, Settings, YM } from '../../engine';
 import { rowCountsText } from './usageText';
 import type { RowCounts } from './usageText';
 
@@ -123,13 +123,43 @@ export function addCategory(d: Data, kind: CategoryKind, name: string, limit?: n
   return { ...d, categories: { ...d.categories, expense: [...d.categories.expense, c] } };
 }
 
-/** The monthly limit of expense category `name`; undefined removes it (0 is a limit). */
+/** The usual monthly limit of expense category `name`; undefined removes it (0 is a limit). Month limits are kept. */
 export function setLimit(d: Data, name: string, limit: number | undefined): Data {
   const expense = d.categories.expense.map((c): ExpenseCategory => {
     if (c.name !== name) return c;
-    return limit === undefined ? { name: c.name } : { name: c.name, limit };
+    const { limit: _old, ...rest } = c;
+    return limit === undefined ? rest : { ...rest, limit };
   });
   return { ...d, categories: { ...d.categories, expense } };
+}
+
+/**
+ * The own limit of expense category `name` in month ym; undefined removes it (the month then has the usual limit, 0 is
+ * a limit). The months stay in calendar order; without any, `monthLimits` is absent.
+ */
+export function setMonthLimit(d: Data, name: string, ym: YM, limit: number | undefined): Data {
+  const expense = d.categories.expense.map((c): ExpenseCategory => {
+    if (c.name !== name) return c;
+    const { monthLimits, ...rest } = c;
+    const months = { ...monthLimits };
+    if (limit === undefined) delete months[ym];
+    else months[ym] = limit;
+    const keys = Object.keys(months).sort();
+    return keys.length === 0 ? rest : { ...rest, monthLimits: Object.fromEntries(keys.map((k) => [k, months[k] as number])) };
+  });
+  return { ...d, categories: { ...d.categories, expense } };
+}
+
+/** The months of `c`'s own limits that lie outside the accounting year of `s` (the sheet shows 12 months only). */
+export function outOfYearMonths(c: ExpenseCategory, s: Settings): YM[] {
+  return Object.keys(c.monthLimits ?? {}).filter((ym) => !inAccountingYear(ym, s));
+}
+
+/** Removes the own limits of expense category `name` outside the accounting year; the months inside stay. The same Data when none. */
+export function clearOutOfYearMonthLimits(d: Data, name: string): Data {
+  const c = d.categories.expense.find((e) => e.name === name);
+  if (c === undefined) return d;
+  return outOfYearMonths(c, d.settings).reduce((next, ym) => setMonthLimit(next, name, ym, undefined), d);
 }
 
 function moved<T>(list: readonly T[], index: number, delta: -1 | 1): T[] | null {

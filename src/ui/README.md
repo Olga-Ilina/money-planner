@@ -31,6 +31,16 @@ together with every user. Spec: `.internal/specs/…-design.md` §5–§7.
   gives `cards` (debit only), `total` («Всего»: debit, cash, credit) and `savings` («Сбережения») apart; the forecast
   counts only free money — rows of a savings account move nothing, and transfers across the line (and the credit card
   paid from savings) are each month's and week's `transfers`. Whether a row counts: `inBalance(data, accountId)`.
+- **Transfers on «Постоянные» and «Запланированные»** (spec `2026-10-01-planned-transfers`, the tracker's layout
+  contract `2026-10-02-transfers-layout`): a journal row and a recurring payment may be of kind `'transfer'`, from
+  `account` («Со счёта») to `toAccount` («На счёт»), with no category — neither income nor an expense (nor in the
+  limits); a form requires both accounts, different (`transferErrors`, `planForm.ts`). Its effect on the free money is
+  `freeMoneyFactor(data, row)` (−1 into savings, +1 out of them, 0 otherwise). `monthSummary` gives `toSavings`
+  («Переводы в накопления», net) and `freeAfterSavings`; `monthCardRepayment(data, ym, today)` and
+  `cardRepayments(data, today)` the automatic card repayment, for reference only (in no sum). The tracker's checks of a
+  row: `rowCheck(data, row)` → `ROW_CHECK_LABEL` («Похоже на перевод…» for an income to savings — `transferHint` under
+  «Счёт» of the forms —, «Перевод: укажите «На счёт»», «Перевод: «Счёт» = «На счёт»»); a row with a check is no
+  duplicate. The lines of «Месяц»: `TO_SAVINGS_LABEL`, `FREE_AFTER_SAVINGS_LABEL`, `CARD_REPAYMENT_LABEL`.
 - **The tracker's names of enum values come from the engine too** (`src/engine/labels.ts`, the same copy the
   Excel files use): `ACCOUNT_TYPE_LABEL` (and `SAVINGS_NOTE`, the one line on what a savings account is), `KIND_LABEL`,
   `JOURNAL_STATUS_LABEL`, `SOURCE_LABEL` (feed sources),
@@ -92,35 +102,50 @@ Tabs (`TabBar`), each with its root screen and the pages pushed on top of it; sh
   «ещё не начался» → `settings`), «сделайте копию» (`makeCopy`). Cards «На картах», «Наличные», «Кредитка» (debt and
   the next debit, «Спишется 10 октября: …») → «Счета». «Новая операция» → `operation`. «Ближайшие 7 дней» (and
   everything overdue): a row → `item`; ✓ pays in one tap, or opens `item` when the record lacks an account — a deleted one
-  counts as none, and the card then asks for one (a purchase: also a price or cost). «Этот месяц»: «Доход», «Расход» → «Лента» at that month. «Проверьте записи» (each counts what the place it
-  opens can show): «Оплачено без счёта» and «Возможные дубли» — the rows «Лента» finds over the 12 accounting months
-  (`feedCheckCounts`) → «Лента» filtered to them (`openFeedCheck`); «Куплено без даты» → `purchases`; «Вне учётного
-  года» → `settings`. At the bottom, only once the sync is in use: «Отправьте изменения на Mac» (a quiet one-line row) when
-  the data hold changes not sent and the last sync is more than a day old → `sync`.
+  counts as none, and the card then asks for one (a purchase: also a price or cost; a transfer: also «На счёт»); a
+  planned or recurring transfer is marked the same way («Отметить перевод: …», «Переведено»), never overdue. «Этот месяц»: «Доход», «Расход» → «Лента» at that month. «Проверьте записи» (each counts what the place it
+  opens can show): «Оплачено без счёта», «Возможные дубли» and «Проверьте переводы» (the tracker's checks of a row,
+  `rowCheck`) — the rows «Лента» finds over the 12 accounting months
+  (`feedCheckCounts`; a record with a check of a transfer counts once, in however many months it shows) → «Лента»
+  filtered to them (`openFeedCheck`); «Куплено без даты» → `purchases`; «Вне учётного года» → `settings`. At the
+  bottom, only once the sync is in use: «Отправьте изменения на Mac» (a quiet one-line row) when the data hold changes
+  not sent and the last sync is more than a day old → `sync`.
 - **«Лента»** — `screens/Feed.tsx`. The month (`feedMonth`), the filter «Все / Траты / Доходы / Не оплачено», the
-  month's «Доход» and «Расход» with their plans, the records by date (badges «дубль?», «без счёта»; the check reads
-  «Оплачено / Получено / Куплено») → `item`. «+» → `add` → a form (an operation and a planned record are dated in the
+  month's «Доход» and «Расход» with their plans, the records by date (badges «дубль?», «без счёта» and the checks of a
+  row, `CHECK_BADGE`; a transfer shows «Со счёта → На счёт»; the check reads «Оплачено / Получено / Переведено /
+  Куплено») → `item`. Under «Все», the automatic card repayment on its debit day (`cardRepayments`, a debit other than
+  0): «Погашение кредитки: <card> ← <from>», «списано» / «ожидается», for reference — not a button. «+» → `add` → a form (an operation and a planned record are dated in the
   shown month; saved into another month → «Показать»). The month report (.xlsx). A check filter from «Сегодня» shows
   a note with «Показать все»; one that finds nothing in any month is dropped (no note).
 - **«Счета»** — `screens/Accounts.tsx`. Totals («На картах», «Наличные», «Долг по кредитке», «Всего», «Сбережения» —
-  outside «Всего» and the forecast), notices about rows that reach no balance (→ «Лента», «без счёта» filtered),
+  outside «Всего» and the forecast), notices about rows that reach no balance (→ «Лента», «без счёта» filtered) and
+  about transfers without «На счёт», to the same account, incomes to savings (→ «Лента», «transfers» filtered),
   balances — the accounts in the balance under «Остатки», the savings accounts under «Сбережения» — → `account`
   (`pages/AccountPage.tsx`, params `{ id }`: movements of a month with the running balance), the credit card → `credit`
   (`pages/CreditPage.tsx`: statements and debits), «Перевод между счетами» → `operation` (a transfer, any account to
   any account), «Счета и движения» (.xlsx).
-- **«Отчёты»** — `screens/Reports.tsx` (+ `charts.ts`). «Месяц» (categories: limit, plan, fact), «Год» (months,
+- **«Отчёты»** — `screens/Reports.tsx` (+ `charts.ts`). «Месяц» (categories: limit, plan, fact; «Переводы в
+  накопления» as their last row, not in «Расход», and «Свободно после накоплений» under them when the month has
+  transfers into savings; «Погашение кредитки (N-го)» for reference when the card is debited that month), «Год» (months,
   categories × months), «Прогноз» (free money: weeks with the cushion, the three months; «Переводы в сбережения / из
-  сбережений» in a month card and a «Переводы» column of the weeks only when there are any); each is exported.
-- **«Ещё»** — `screens/More.tsx`. Планы: `recurring` («Постоянные платежи» → `recurring` form), `purchases`
+  сбережений» in a month card and a «Переводы» column of the weeks only when there are any; «Кредиты» in a month card
+  when there is a credit card — `forecastCardRepayment`, for reference, in no sum; «Резерв по лимитам» — what is left of
+  the limits, `limitReserve`, in the expenses, the balances and the weeks (a «Резерв» column), only when there is one;
+  `forecast(data, today)`, so «Хватит ли денег» follows it too); each is exported.
+- **«Ещё»** — `screens/More.tsx`. Планы: `recurring` («Постоянные платежи»: expenses, incomes, «Переводы» → `recurring` form), `purchases`
   («Покупки» → `purchase` form; «Хватит ли денег» from `purchaseStatus`), `debts` («Долги» → `debt` form). Настройки:
-  `categories` («Категории и лимиты»), `accounts-settings` («Счета и кредитка»; the type «Сберегательная» shows
+  `categories` («Категории и лимиты»: the usual limit inline; «Лимиты по месяцам» — a row per expense category opens
+  «Обычный лимит» and the 12 accounting months, an empty month has the usual limit; `limitFor` gives the month's
+  limit; month limits outside the accounting year are one line «Ещё лимиты вне учётного года: N» with «Очистить»,
+  and the year-change note counts them), `accounts-settings` («Счета и кредитка»; the type «Сберегательная» shows
   `SAVINGS_NOTE` as the field's hint), `settings` («Учёт и прогноз»: the accounting year, the forecast, the
   cushion, the balances date; explains records outside the year), `pin` («PIN-код»). Данные: `sync` («Синхронизация»:
   the status, «Отправить на Mac», «Забрать с Mac», «Вернуть данные до синхронизации»), `import` («Загрузить
   трекер»), `backup` («Резервная копия»: `makeCopy`, restore). `about` («О приложении»).
 - **Sheets** — `operation` (OperationForm), `journal` (JournalForm: a planned record), `recurring`, `purchase`, `debt`
-  (the plan forms), `item` (ItemSheet: the card of any record — pay / mark / buy, postpone, «Пометить отменённой»,
-  «Изменить», «Удалить»), `add` (AddMenu).
+  (the plan forms; a planned record and a recurring payment may be «Перевод»), `item` (ItemSheet: the card of any
+  record — pay / mark / buy, postpone, «Пометить отменённой», «Изменить», «Удалить»; the check of a row in words),
+  `add` (AddMenu).
 - Outside the tabs: `Onboarding.tsx` (first run), `Lock.tsx` (PIN), start errors and «Доступна новая версия» (`App.tsx`).
 
 **Page layout.** Each sub-page is one file `pages/<Name>Page.tsx` exporting `<Name>Page(props: RoutedPageProps)`

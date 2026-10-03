@@ -4,6 +4,10 @@
 // ExcelJS is loaded lazily, when the first report is made.
 import type { Cell, Workbook, Worksheet } from 'exceljs';
 import {
+  CARD_REPAYMENT_LABEL,
+  FREE_AFTER_SAVINGS_LABEL,
+  ROW_CHECK_LABEL,
+  TO_SAVINGS_LABEL,
   accountMovements,
   accountingMonths,
   balances,
@@ -14,6 +18,7 @@ import {
   forecast,
   monthEnd,
   monthItems,
+  monthCardRepayment,
   monthLabel,
   monthStart,
   monthSummary,
@@ -272,13 +277,19 @@ function sheetNamer(taken: string[]): (wanted: string) => string {
 }
 
 // ── Month report ────────────────────────────────────────────────────────
-/** «Итоги», «Категории», «Движения», «По дням» of month ym; `generatedOn` (default: today on this device) goes in the subtitles. */
+/**
+ * «Итоги», «Категории», «Движения», «По дням» of month ym; `generatedOn` (default: today on this device) goes in the
+ * subtitles and is the «today» of the card repayment already debited. As the tracker's «Месяц»: transfers into savings,
+ * what is free after them and the card repayment are lines of their own, in no expense sum.
+ */
 export async function monthReport(data: Data, ym: YM, generatedOn: ISODate = localToday()): Promise<ReportFile> {
   const wb = await newWorkbook();
   const label = monthLabel(ym);
   const subtitle = `Период: ${monthPeriod(ym)} · ${generated(generatedOn)}`;
   const s = monthSummary(data, ym);
   const hasLimits = s.byCategory.some((c) => c.limit !== undefined);
+  const repayment = monthCardRepayment(data, ym, generatedOn);
+  const repaymentLabel = `${CARD_REPAYMENT_LABEL} (${repayment.day}-го)`;
 
   addTable(wb, 'Итоги', {
     title: `Итоги — ${label}`,
@@ -292,7 +303,14 @@ export async function monthReport(data: Data, ym: YM, generatedOn: ISODate = loc
       ['Баланс факт', s.balanceFact],
       ['Лимиты всего', s.limitsTotal],
       ['Остаток лимитов', s.limitsLeft],
+      [`${TO_SAVINGS_LABEL} план`, s.toSavings.plan],
+      [`${TO_SAVINGS_LABEL} факт`, s.toSavings.fact],
+      [`${FREE_AFTER_SAVINGS_LABEL} план`, s.freeAfterSavings.plan],
+      [`${FREE_AFTER_SAVINGS_LABEL} факт`, s.freeAfterSavings.fact],
+      [`${repaymentLabel} план`, repayment.plan],
+      [`${repaymentLabel} факт`, repayment.fact],
     ],
+    notes: [{ label: `${CARD_REPAYMENT_LABEL} — справочно: покупки по кредитке уже в расходах, списание — в остатках`, values: [] }],
   });
 
   addTable(wb, 'Категории', {
@@ -311,6 +329,11 @@ export async function monthReport(data: Data, ym: YM, generatedOn: ISODate = loc
       ['Без категории', null, s.uncategorized.plan, s.uncategorized.fact, null, null],
     ],
     totals: [[TOTAL, hasLimits ? s.limitsTotal : null, s.expensePlan, s.expenseFact, hasLimits ? s.limitsLeft : null, null]],
+    // not categories: under the plan and the fact, outside ИТОГО (net into savings; income − expenses − that)
+    notes: [
+      { label: TO_SAVINGS_LABEL, values: [[null, 'money'], [s.toSavings.plan, 'money'], [s.toSavings.fact, 'money']] },
+      { label: FREE_AFTER_SAVINGS_LABEL, values: [[null, 'money'], [s.freeAfterSavings.plan, 'money'], [s.freeAfterSavings.fact, 'money']] },
+    ],
   });
 
   const items = monthItems(data, ym);
@@ -331,20 +354,22 @@ export async function monthReport(data: Data, ym: YM, generatedOn: ISODate = loc
       { header: 'Статус', kind: 'text' },
       { header: 'Счёт', kind: 'text' },
       { header: 'На счёт', kind: 'text' },
-      { header: 'Возможный дубль', kind: 'text' },
+      { header: 'Дубль или проверка', kind: 'text' },
     ],
+    // As «Лента»: a transfer has no category (one typed in the tracker is kept, unused); the last column is the
+    // tracker's «Дубль или проверка» — a possible duplicate or the check of the row's type and accounts.
     rows: items.map((i): Value[] => [
       i.date,
       SOURCE_LABEL[i.source],
       KIND_LABEL[i.kind],
-      i.category,
+      i.kind === 'transfer' ? null : i.category,
       i.what,
       i.plan,
       i.fact,
       JOURNAL_STATUS_LABEL[i.status],
       accountName(data, i.account),
       accountName(data, i.toAccount),
-      i.duplicate !== undefined ? DUPLICATE_LABEL[i.duplicate] : null,
+      i.duplicate !== undefined ? DUPLICATE_LABEL[i.duplicate] : i.check !== undefined ? ROW_CHECK_LABEL[i.check] : null,
     ]),
     totals: [
       line('Доходы', s.incomePlan, s.incomeFact),
@@ -525,6 +550,8 @@ export async function accountsReport(data: Data, today: ISODate, ym: YM, generat
 const BELOW = 'да';
 /** Transfers to savings (−) and from them (+): the free money they move, neither income nor an expense. */
 const TRANSFERS = 'Переводы в / из сбережений';
+/** The reserve by limits of the forecast: the everyday spending still to come, in the expenses. */
+const RESERVE = 'Резерв по лимитам';
 
 /**
  * «Месяцы» (the three forecast months) and «Недели» (the 13 weeks) of the forecast, as the «Прогноз» view shows
@@ -532,7 +559,9 @@ const TRANSFERS = 'Переводы в / из сбережений';
  */
 export async function forecastReport(data: Data, generatedOn: ISODate = localToday()): Promise<ReportFile> {
   const wb = await newWorkbook();
-  const f = forecast(data);
+  const f = forecast(data, generatedOn);
+  // «Резерв по лимитам (повседневные траты)»: a column only when there is one (it is in «Расходы»)
+  const reserve = f.months.some((m) => m.reserve !== 0);
   const cushion = data.settings.cushion;
   const first = f.months[0];
   const last = f.months[f.months.length - 1];
@@ -550,12 +579,14 @@ export async function forecastReport(data: Data, generatedOn: ISODate = localTod
       { header: 'Постоянные', kind: 'money' },
       { header: 'Разовые', kind: 'money' },
       { header: 'Покупки', kind: 'money' },
+      ...(reserve ? [{ header: RESERVE, kind: 'money' } as const] : []),
       { header: TRANSFERS, kind: 'money' },
       { header: 'Остаток на конец', kind: 'money' },
       { header: 'Запас над подушкой', kind: 'money' },
     ],
     rows: f.months.map((m): Value[] => [
-      m.label, m.income, m.expenses, m.recurring, m.oneOff, m.purchases, m.transfers, m.end, m.overCushion,
+      m.label, m.income, m.expenses, m.recurring, m.oneOff, m.purchases, ...(reserve ? [m.reserve] : []), m.transfers, m.end,
+      m.overCushion,
     ]),
     notes: [
       { label: 'На начало прогноза', values: [[f.start, 'money']] },
@@ -573,12 +604,15 @@ export async function forecastReport(data: Data, generatedOn: ISODate = localTod
       { header: 'По', kind: 'date' },
       { header: 'Доходы', kind: 'money' },
       { header: 'Расходы', kind: 'money' },
+      ...(reserve ? [{ header: RESERVE, kind: 'money' } as const] : []),
       { header: TRANSFERS, kind: 'money' },
       { header: 'Остаток на конец', kind: 'money' },
       { header: 'Ниже подушки', kind: 'text' },
     ],
     // below the cushion exactly as the engine counts f.weeksBelow
-    rows: weeks.map((w): Value[] => [w.n, w.from, w.to, w.income, w.expenses, w.transfers, w.end, w.end < w.cushion ? BELOW : null]),
+    rows: weeks.map((w): Value[] => [
+      w.n, w.from, w.to, w.income, w.expenses, ...(reserve ? [w.reserve] : []), w.transfers, w.end, w.end < w.cushion ? BELOW : null,
+    ]),
     filter: true,
     notes: [
       { label: 'Недель ниже подушки', values: [[f.weeksBelow, 'text']] },

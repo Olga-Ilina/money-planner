@@ -1,15 +1,16 @@
 // Card of one record (spec §5 «касание — карточка»), opened with openSheet('item', {item}) from
 // «Лента» and «Сегодня»; `item` is null while closed. It shows the record and what can be done with
-// it, by source: a journal row — «Оплачено» (with the fact), «Перенести», «Пометить отменённой», and
-// «Снять оплату» once paid; a recurring payment — the month's mark (✓ or an amount; the account it
+// it, by source: a journal row — «Оплачено» (with the fact; «Переведено» for a transfer), «Перенести», «Пометить
+// отменённой», and «Снять оплату» once paid; a recurring payment — the month's mark (✓ or an amount; the account it
 // lacks is saved in the payment) or «Снять отметку»; a purchase — «Куплено» (with the price and the account it needs); every record —
-// «Изменить» (its form) and «Удалить» (asked first). Every change is one commit with «Отменить» in the
-// toast.
+// «Изменить» (its form) and «Удалить» (asked first). A transfer shows «Со счёта» and «На счёт» (paying asks for the
+// one it lacks); the tracker's check of a row («Перевод: укажите «На счёт»», …) is said on top. Every change is one
+// commit with «Отменить» in the toast.
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import {
-  JOURNAL_STATUS_LABEL, KIND_LABEL, addDays, duplicatesForJournal, duplicatesForOperation, inAccountingYear, journalFact, journalMonth, markPaid,
-  marksInBalances, monthLabel, opAmount, purchaseFact, recurringDate, recurringFact, ymOf,
+  JOURNAL_STATUS_LABEL, KIND_LABEL, ROW_CHECK_LABEL, addDays, duplicatesForJournal, duplicatesForOperation, inAccountingYear, journalFact,
+  journalMonth, markPaid, marksInBalances, monthLabel, opAmount, purchaseFact, recurringDate, recurringFact, rowCheck, ymOf,
 } from '../../engine';
 import type { Data, DuplicateOf, FeedSource, ISODate, JournalRow, OpKind, Operation, Purchase, Recurring, YM } from '../../engine';
 import { actions } from '../actions';
@@ -186,6 +187,23 @@ function DuplicateNote({ of }: { of: DuplicateOf | null }) {
   return of ? <Banner tone="warning">{DUPLICATE_TEXT[of]}</Banner> : null;
 }
 
+/** The tracker's check of the row's type and accounts, in its words (none: nothing shown). */
+function CheckNote({ d, row }: { d: Data; row: { kind: OpKind; account?: string; toAccount?: string } }) {
+  const check = rowCheck(d, row);
+  return check ? <Banner tone="warning">{ROW_CHECK_LABEL[check]}</Banner> : null;
+}
+
+/** «Счёт», or «Со счёта» and «На счёт» of a transfer («не указан» for one it lacks). */
+function AccountRows({ d, row }: { d: Data; row: { kind: OpKind; account?: string; toAccount?: string } }) {
+  if (row.kind !== 'transfer') return row.account ? <Row title="Счёт" value={accountName(d, row.account)} /> : null;
+  return (
+    <>
+      <Row title="Со счёта" value={accountName(d, row.account) || 'не указан'} />
+      <Row title="На счёт" value={accountName(d, row.toAccount) || 'не указан'} />
+    </>
+  );
+}
+
 /** «Изменить», «Удалить» and the like: a list of tappable rows under the card. */
 function ActionRow({ label, onClick, destructive }: { label: string; onClick: () => void; destructive?: boolean }) {
   const title = destructive ? label : <span class="item-sheet-action">{label}</span>;
@@ -205,11 +223,13 @@ function kindAndDate(kind: OpKind, date: ISODate | undefined): string {
  * nothing is chosen for the user.
  */
 function PayAccount({
-  d, value, onChange, required, error, hint,
-}: { d: Data; value?: string; onChange: (id: string | undefined) => void; required?: boolean; error?: string; hint?: string }) {
+  d, value, onChange, required, error, hint, label = 'Счёт',
+}: {
+  d: Data; value?: string; onChange: (id: string | undefined) => void; required?: boolean; error?: string; hint?: string; label?: string;
+}) {
   return (
     <SelectField
-      label="Счёт"
+      label={label}
       value={value}
       options={accountOptions(d)}
       placeholder={required ? 'Не выбран' : 'Без счёта'}
@@ -226,12 +246,16 @@ function JournalCard({ d, close, ask, r }: CardProps & { r: JournalRow }) {
   const status = journalStatus(r);
   const payable = status === 'planned' || status === 'postponed';
   const income = r.kind === 'income';
+  const transfer = r.kind === 'transfer';
+  const paidLabel = income ? 'Получено' : transfer ? 'Переведено' : 'Оплачено';
   const v = useFieldValidity();
   const [mode, setMode] = useState<'card' | 'postpone'>('card');
   const [fact, setFact] = useState<number | undefined>(r.fact ?? r.plan);
-  // no account, or a deleted one (as good as none): paying asks for one
+  // no account, or a deleted one (as good as none): paying asks for one (a transfer also for «На счёт»)
   const lacksAccount = knownAccount(d, r.account) === undefined;
+  const lacksTo = transfer && knownAccount(d, r.toAccount) === undefined;
   const [account, setAccount] = useState<string | undefined>(lacksAccount ? defaultAccountId(d) : undefined);
+  const [toAccount, setToAccount] = useState<string | undefined>(undefined);
   const [payTried, setPayTried] = useState(false);
   // postponing means later: a week after the row's date, or after today when it is overdue
   const [newDate, setNewDate] = useState<ISODate | undefined>(() => addDays(r.date > today() ? r.date : today(), 7));
@@ -258,8 +282,9 @@ function JournalCard({ d, close, ask, r }: CardProps & { r: JournalRow }) {
     }
     let next = markPaid(appData(), { source: 'journal', id: r.id }, fact);
     if (lacksAccount && account) next = { ...next, journal: replaceRow(next.journal, r.id, (x) => ({ ...x, account })) };
+    if (lacksTo && toAccount) next = { ...next, journal: replaceRow(next.journal, r.id, (x) => ({ ...x, toAccount })) };
     close();
-    actions.commit(next, income ? 'Получено' : 'Оплачено');
+    actions.commit(next, paidLabel);
   };
 
   const postpone = () => {
@@ -295,13 +320,14 @@ function JournalCard({ d, close, ask, r }: CardProps & { r: JournalRow }) {
   return (
     <>
       <Head amount={r.fact ?? r.plan ?? 0} income={income} name={itemTitle(r)} meta={kindAndDate(r.kind, r.date)} />
+      <CheckNote d={d} row={r} />
       <DuplicateNote of={duplicatesForJournal(d, r)} />
       <Section>
         <Row title="Статус" value={JOURNAL_STATUS_LABEL[status]} />
         {r.plan !== undefined && <Row title="План" value={money(r.plan)} />}
         {shownFact !== undefined && <Row title="Факт" value={money(shownFact)} />}
-        {r.category && <Row title="Категория" value={r.category} />}
-        {r.account && <Row title="Счёт" value={accountName(d, r.account)} />}
+        {r.category && !transfer && <Row title="Категория" value={r.category} />}
+        <AccountRows d={d} row={r} />
         {r.priority && <Row title="Приоритет" value={r.priority} />}
         {month !== ymOf(r.date) && <Row title="Месяц учёта" value={monthLabel(month)} />}
       </Section>
@@ -339,11 +365,14 @@ function JournalCard({ d, close, ask, r }: CardProps & { r: JournalRow }) {
                   onChange={v.field('fact', setFact)}
                   error={payTried ? payError : undefined}
                 />
-                {lacksAccount && <PayAccount d={d} value={account} onChange={setAccount} />}
+                {lacksAccount && (
+                  <PayAccount d={d} value={account} onChange={setAccount} label={transfer ? 'Со счёта' : 'Счёт'} />
+                )}
+                {lacksTo && <PayAccount d={d} value={toAccount} onChange={setToAccount} label="На счёт" />}
               </Section>
               <div class="sheet-actions item-sheet-actions">
                 <Button full disabled={v.anyInvalid} onClick={pay}>
-                  {income ? 'Получено' : 'Оплачено'}
+                  {paidLabel}
                 </Button>
               </div>
             </>
@@ -365,13 +394,17 @@ function JournalCard({ d, close, ask, r }: CardProps & { r: JournalRow }) {
 
 function RecurringCard({ d, close, ask, rec, ym }: CardProps & { rec: Recurring; ym: YM }) {
   const income = rec.kind === 'income';
+  const transfer = rec.kind === 'transfer';
   const mark = rec.marks[ym];
   const month = monthLabel(ym).toLowerCase();
   const v = useFieldValidity();
   const [amount, setAmount] = useState<number | undefined>(rec.amount);
-  // a payment without an account (or with a deleted one) reaches no balance: marking offers one (it is saved in the payment)
+  // a payment without an account (or with a deleted one) reaches no balance: marking offers one (it is saved in the
+  // payment); a transfer without «На счёт» is offered that one too
   const lacksAccount = knownAccount(d, rec.account) === undefined;
+  const lacksTo = transfer && knownAccount(d, rec.toAccount) === undefined;
   const [account, setAccount] = useState<string | undefined>(lacksAccount ? defaultAccountId(d) : undefined);
+  const [toAccount, setToAccount] = useState<string | undefined>(undefined);
   const [tried, setTried] = useState(false);
   const every = Math.max(1, rec.every ?? 1);
   // the account goes into the payment: its marks of other months that the balances count reach it too
@@ -389,6 +422,7 @@ function RecurringCard({ d, close, ask, rec, ym }: CardProps & { rec: Recurring;
     }
     let next = markPaid(appData(), { source: 'recurring', id: rec.id, ym }, amount);
     if (lacksAccount && account) next = { ...next, recurring: replaceRow(next.recurring, rec.id, (x) => ({ ...x, account })) };
+    if (lacksTo && toAccount) next = { ...next, recurring: replaceRow(next.recurring, rec.id, (x) => ({ ...x, toAccount })) };
     close();
     actions.commit(next, 'Отмечено');
   };
@@ -429,12 +463,13 @@ function RecurringCard({ d, close, ask, rec, ym }: CardProps & { rec: Recurring;
         name={itemTitle(rec)}
         meta={kindAndDate(rec.kind, recurringDate(rec, ym))}
       />
+      <CheckNote d={d} row={rec} />
       <Section>
         <Row title="Сумма" value={money(rec.amount)} />
         <Row title="Периодичность" value={everyText(every)} />
         {range && <Row title="Действует" value={range} />}
-        {rec.category && <Row title="Категория" value={rec.category} />}
-        {rec.account && <Row title="Счёт" value={accountName(d, rec.account)} />}
+        {rec.category && !transfer && <Row title="Категория" value={rec.category} />}
+        <AccountRows d={d} row={rec} />
         {mark !== undefined && (
           <Row
             title={`Отметка за ${month}`}
@@ -452,11 +487,14 @@ function RecurringCard({ d, close, ask, rec, ym }: CardProps & { rec: Recurring;
               onChange={v.field('amount', setAmount)}
               error={tried && amount === undefined ? 'Введите сумму' : undefined}
             />
-            {lacksAccount && <PayAccount d={d} value={account} onChange={setAccount} hint={accountHint} />}
+            {lacksAccount && (
+              <PayAccount d={d} value={account} onChange={setAccount} hint={accountHint} label={transfer ? 'Со счёта' : 'Счёт'} />
+            )}
+            {lacksTo && <PayAccount d={d} value={toAccount} onChange={setToAccount} label="На счёт" />}
           </Section>
           <div class="sheet-actions item-sheet-actions">
             <Button full disabled={v.anyInvalid} onClick={markMonth}>
-              {`${income ? 'Отметить получение' : 'Отметить оплату'} за ${month}`}
+              {`${income ? 'Отметить получение' : transfer ? 'Отметить перевод' : 'Отметить оплату'} за ${month}`}
             </Button>
           </div>
         </>
@@ -576,6 +614,7 @@ function OperationCard({ d, close, ask, o }: CardProps & { o: Operation }) {
   return (
     <>
       <Head amount={opAmount(o)} income={income} name={itemTitle(o)} meta={kindAndDate(o.kind, o.date)} />
+      <CheckNote d={d} row={o} />
       <DuplicateNote of={duplicatesForOperation(d, o)} />
       <Section>
         {o.category && <Row title="Категория" value={o.category} />}

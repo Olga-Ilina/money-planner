@@ -9,7 +9,7 @@ import { ACC, scenario } from '../engine/scenario';
 const EXPORTED_AT = '2026-10-01T09:30:00.000Z';
 const NOT_A_BACKUP = 'Это не резервная копия приложения «Трекер расходов».';
 const NEWER_VERSION = 'Копия сделана более новой версией приложения. Обновите приложение.';
-const SHEETS = ['Настройки', 'Категории', 'Счета', 'Операции', 'Запланированные', 'Постоянные', 'Отметки', 'Покупки', 'Долги', '_schema'];
+const SHEETS = ['Настройки', 'Категории', 'Лимиты по месяцам', 'Счета', 'Операции', 'Запланированные', 'Постоянные', 'Отметки', 'Покупки', 'Долги', '_schema'];
 
 /** Every optional field in use, every enum value, awkward numbers, text and dates. */
 function rich(): Data {
@@ -392,7 +392,8 @@ describe('importBackup rejects what it cannot restore', () => {
     expect((await importError(new TextEncoder().encode('не таблица').buffer)).message).toBe(NOT_A_BACKUP);
   });
 
-  it.each(SHEETS)('rejects a workbook without the sheet «%s»', async (name) => {
+  // «Лимиты по месяцам» is optional: a copy made before it has none (backup.monthLimits.test.ts)
+  it.each(SHEETS.filter((name) => name !== 'Лимиты по месяцам'))('rejects a workbook without the sheet «%s»', async (name) => {
     const buf = await edited(scenario(), (wb) => wb.removeWorksheet(wb.getWorksheet(name)!.id));
     expect((await importError(buf)).message).toBe(NOT_A_BACKUP);
   });
@@ -431,7 +432,8 @@ describe('importBackup rejects what it cannot restore', () => {
     ['Операции', 'C4', 'Подарок', 'строка 4'], // unknown kind
     ['Операции', 'F2', 'много', 'строка 2'], // amount is not a number
     ['Запланированные', 'B5', 'вчера', 'строка 5'], // not a date
-    ['Запланированные', 'C2', 'Перевод', 'строка 2'], // journal rows are expenses or incomes
+    ['Запланированные', 'C2', 'Подарок', 'строка 2'], // unknown kind (expense, income or — since transfers — transfer)
+    ['Постоянные', 'C2', 'Подарок', 'строка 2'], // the same on «Постоянные»
     ['Запланированные', 'H3', 'Потом', 'строка 3'], // unknown status
     ['Запланированные', 'K2', 'ноябрь', 'строка 2'], // accounting month is not YYYY-MM
     ['Постоянные', 'F3', null, 'строка 3'], // no amount
@@ -665,5 +667,62 @@ describe('the sheet of the journal rows: «Запланированные», or 
   it('a copy without either sheet is not a backup', async () => {
     const buf = await edited(scenario(), (wb) => { wb.getWorksheet(NEW)!.name = 'Другой лист'; });
     expect((await importError(buf)).message).toBe(NOT_A_BACKUP);
+  });
+});
+
+// Planned and recurring transfers (spec 2026-10-01-planned-transfers): the kind «Перевод» and «На счёт (id)» on
+// «Запланированные» and «Постоянные», as on «Операции». The format version stays 1: a copy made before has no such
+// column and restores as before.
+describe('transfers on «Запланированные» and «Постоянные»', () => {
+  const withTransfers = (): Data => {
+    const d = scenario();
+    d.journal.push(
+      { id: 'j-tr', date: '2026-10-07', kind: 'transfer', what: 'В копилку', plan: 300, status: 'paid', account: ACC.card, toAccount: ACC.cash },
+      { id: 'j-tr-bez', date: '2026-10-08', kind: 'transfer', what: 'Без «На счёт»', plan: 10, account: ACC.card },
+    );
+    d.recurring.push(
+      { id: 'r-tr', what: 'На кредитку', kind: 'transfer', day: 15, amount: 30, account: ACC.card, toAccount: ACC.credit, marks: { '2026-10': '✓' } },
+    );
+    return d;
+  };
+
+  it('restores the kind «Перевод» and «На счёт» exactly', async () => {
+    expect(await roundTrip(withTransfers())).toStrictEqual(withTransfers());
+  });
+
+  it('writes «Перевод», «На счёт (id)» and its name on both sheets, after the columns a copy had before', async () => {
+    const wb = await load(await exportBackup(withTransfers(), EXPORTED_AT));
+    const journal = wb.getWorksheet('Запланированные')!;
+    expect(journal.getRow(1).values).toEqual([
+      undefined, 'id', 'Дата', 'Тип', 'Категория', 'Что', 'План', 'Факт', 'Статус', 'Счёт (id)', 'Приоритет', 'Месяц учёта',
+      'Счёт (название)', 'На счёт (id)', 'На счёт (название)',
+    ]);
+    const tr = journal.getRow(12); // j-tr: after the 10 rows of the scenario
+    expect([tr.getCell(1).value, tr.getCell(3).value, tr.getCell(9).value, tr.getCell(12).value, tr.getCell(13).value, tr.getCell(14).value])
+      .toEqual(['j-tr', 'Перевод', ACC.card, 'Карта', ACC.cash, 'Наличные']);
+    const recurring = wb.getWorksheet('Постоянные')!;
+    expect(recurring.getRow(1).values).toEqual([
+      undefined, 'id', 'Что', 'Тип', 'Категория', 'День', 'Сумма', 'Раз в N мес.', 'Действует с', 'по', 'Счёт (id)',
+      'Счёт (название)', 'На счёт (id)', 'На счёт (название)',
+    ]);
+    const r = recurring.getRow(6); // r-tr: after the 4 rows of the scenario
+    expect([r.getCell(1).value, r.getCell(3).value, r.getCell(12).value, r.getCell(13).value]).toEqual(['r-tr', 'Перевод', ACC.credit, 'Кредитка']);
+  });
+
+  it('restores a copy made before transfers (no «На счёт» columns) as before', async () => {
+    const buf = await edited(scenario(), (wb) => {
+      for (const name of ['Запланированные', 'Постоянные']) {
+        const ws = wb.getWorksheet(name)!;
+        const last = ws.getRow(1).cellCount;
+        ws.spliceColumns(last - 1, 2); // «На счёт (id)», «На счёт (название)»
+        expect(ws.getRow(1).values).not.toContain('На счёт (id)');
+      }
+    });
+    expect(await importBackup(buf)).toStrictEqual(scenario());
+  });
+
+  it('still names a missing column the copy always had', async () => {
+    const buf = await edited(scenario(), (wb) => { wb.getWorksheet('Постоянные')!.getCell('J1').value = 'Счёт'; });
+    expect((await importError(buf)).message).toBe('Лист «Постоянные»: нет столбца «Счёт (id)».');
   });
 });

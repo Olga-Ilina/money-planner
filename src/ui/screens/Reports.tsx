@@ -1,4 +1,5 @@
-// Root screen of the «Отчёты» tab: «Месяц» (expense categories with limit, plan and fact), «Год» (income
+// Root screen of the «Отчёты» tab: «Месяц» (expense categories with limit, plan and fact; below them, as the tracker's
+// «Месяц», «Переводы в накопления», «Свободно после накоплений» and the card repayment, none in the expenses), «Год» (income
 // and expense per month — chart, table, categories × months) and «Прогноз» (weekly balance with the
 // cushion, the three forecast months). Every number comes from the engine; the download button exports
 // the view shown: the month report, the year statistics or the forecast (.xlsx). The chosen view and month
@@ -6,7 +7,11 @@
 import { signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useMemo, useRef } from 'preact/hooks';
-import { accountingMonths, forecast, forecastMonths, monthLabel, monthStart, monthSummary, ymOf, yearStats } from '../../engine';
+import {
+  CARD_REPAYMENT_LABEL, FREE_AFTER_SAVINGS_LABEL, TO_SAVINGS_LABEL, accountingMonths, creditCardId, forecast, forecastCardRepayment,
+  forecastMonths, monthCardRepayment,
+  monthLabel, monthStart, monthSummary, ymOf, yearStats,
+} from '../../engine';
 import type { CategorySummary, Data, ForecastMonth, ForecastWeek, YM, YearStats } from '../../engine';
 import { forecastChartConfig, shortMonth, useChart, weekLabel, yearChartConfig } from '../charts';
 import type { ChartBuilder } from '../charts';
@@ -93,20 +98,24 @@ export function Reports() {
       <div class="reports-segment">
         <Segmented label="Вид отчёта" options={VIEWS} value={v} onChange={(x) => (view.value = x)} />
       </div>
-      {v === 'month' && <MonthView data={d} ym={ym} months={months} />}
+      {v === 'month' && <MonthView data={d} ym={ym} months={months} today={today()} />}
       {v === 'year' && <YearView data={d} />}
-      {v === 'forecast' && <ForecastView data={d} />}
+      {v === 'forecast' && <ForecastView data={d} today={today()} />}
     </Page>
   );
 }
 
 // ── Месяц ────────────────────────────────────────────────────────────────
 
-function MonthView({ data, ym, months }: { data: Data; ym: YM; months: YM[] }) {
+function MonthView({ data, ym, months, today: day }: { data: Data; ym: YM; months: YM[]; today: string }) {
   const s = useMemo(() => monthSummary(data, ym), [data, ym]);
+  const repayment = useMemo(() => monthCardRepayment(data, ym, day), [data, ym, day]);
   const rows = s.byCategory.filter((c) => c.limit !== undefined || !isZero(c.plan) || !isZero(c.fact));
   const none = s.uncategorized;
   const showNone = !isZero(none.plan) || !isZero(none.fact);
+  // transfers into savings: a line of the categories (the last one, not in «Расход»), only when the month has them
+  const toSavings = !isZero(s.toSavings.plan) || !isZero(s.toSavings.fact);
+  const showRepayment = !isZero(repayment.plan);
   const hasLimits = s.byCategory.some((c) => c.limit !== undefined);
   const footer = !hasLimits
     ? undefined
@@ -125,7 +134,7 @@ function MonthView({ data, ym, months }: { data: Data; ym: YM; months: YM[] }) {
         <StatCard label="Баланс" value={s.balanceFact} />
       </StatGrid>
       <Section header="Расходы по категориям" footer={footer}>
-        {rows.length === 0 && !showNone ? (
+        {rows.length === 0 && !showNone && !toSavings ? (
           <p class="reports-empty">В этом месяце нет ни плана, ни трат</p>
         ) : (
           <>
@@ -133,11 +142,54 @@ function MonthView({ data, ym, months }: { data: Data; ym: YM; months: YM[] }) {
               <CategoryRow key={c.name} c={c} />
             ))}
             {showNone && <CategoryRow c={{ name: 'Без категории', plan: none.plan, fact: none.fact }} />}
+            {toSavings && (
+              <Row
+                icon="arrows"
+                iconTone="teal"
+                title={TO_SAVINGS_LABEL}
+                subtitle={`План ${formatMoney(s.toSavings.plan)} · не в расходах`}
+                value={<Money value={s.toSavings.fact} tone="plain" />}
+              />
+            )}
           </>
         )}
       </Section>
+      {(toSavings || showRepayment) && (
+        <Section footer={linesFooter(toSavings, showRepayment)}>
+          {toSavings && (
+            <Row
+              title={FREE_AFTER_SAVINGS_LABEL}
+              subtitle={`План ${formatMoney(s.freeAfterSavings.plan)}`}
+              value={<Money value={s.freeAfterSavings.fact} />}
+            />
+          )}
+          {showRepayment && (
+            <Row
+              icon="card"
+              iconTone="muted"
+              title={`${CARD_REPAYMENT_LABEL} (${repayment.day}-го)`}
+              subtitle={`Справочно, уже учтено · ${debited(repayment)}`}
+              value={<Money value={repayment.plan} tone="plain" />}
+              valueTone="muted"
+            />
+          )}
+        </Section>
+      )}
     </>
   );
+}
+
+/** What the lines under the categories are (in no sum of the month). */
+function linesFooter(toSavings: boolean, repayment: boolean): string {
+  const free = 'Свободно после накоплений — доходы минус расходы и переводы в накопления.';
+  const card = 'Погашение кредитки не входит в расходы: покупки по кредитке уже там.';
+  return [toSavings ? free : '', repayment ? card : ''].filter(Boolean).join(' ');
+}
+
+/** «списано» (all of it), «ожидается» (nothing yet) or «списано N» (a part) of the month's card repayment. */
+function debited(r: { plan: number; fact: number }): string {
+  if (roundCents(r.fact) === roundCents(r.plan)) return 'списано';
+  return isZero(r.fact) ? 'ожидается' : `списано ${formatMoney(r.fact)}`;
 }
 
 type CategoryFigures = Pick<CategorySummary, 'name' | 'limit' | 'plan' | 'fact' | 'left'>;
@@ -346,11 +398,15 @@ function CategoryMatrix({ stats }: { stats: YearStats }) {
 
 // ── Прогноз ──────────────────────────────────────────────────────────────
 
-function ForecastView({ data }: { data: Data }) {
-  const f = useMemo(() => forecast(data), [data]);
+function ForecastView({ data, today: day }: { data: Data; today: string }) {
+  const f = useMemo(() => forecast(data, day), [data, day]);
+  // «Резерв по лимитам»: a row of the month cards and a column of the weeks only when there is one
+  const reserve = f.months.some((m) => !isZero(m.reserve));
   const cushion = data.settings.cushion;
   // below the cushion exactly as the engine counts weeks below it (f.weeksBelow)
   const lowBelow = f.minEnd < cushion;
+  const card = creditCardId(data);
+  const hasCard = card !== undefined && data.accounts.some((a) => a.id === card);
 
   return (
     <>
@@ -381,18 +437,32 @@ function ForecastView({ data }: { data: Data }) {
         />
       </Section>
       {f.months.map((m) => (
-        <ForecastMonthCard key={m.ym} m={m} />
+        <ForecastMonthCard
+          key={m.ym}
+          m={m}
+          reserve={reserve}
+          card={hasCard ? forecastCardRepayment(data, m.ym) : undefined}
+        />
       ))}
-      <WeeksTable weeks={f.weeks} />
+      <WeeksTable weeks={f.weeks} reserve={reserve} />
     </>
   );
 }
 
-function ForecastMonthCard({ m }: { m: ForecastMonth }) {
+type CardRepayment = ReturnType<typeof forecastCardRepayment>;
+
+interface ForecastMonthCardProps {
+  m: ForecastMonth;
+  reserve: boolean;
+  card?: CardRepayment | undefined;
+}
+
+function ForecastMonthCard({ m, reserve, card }: ForecastMonthCardProps) {
   const parts: string[] = [];
   if (!isZero(m.recurring)) parts.push(`постоянные ${formatMoney(m.recurring)}`);
   if (!isZero(m.oneOff)) parts.push(`разовые ${formatMoney(m.oneOff)}`);
   if (!isZero(m.purchases)) parts.push(`покупки ${formatMoney(m.purchases)}`);
+  if (!isZero(m.reserve)) parts.push(`резерв ${formatMoney(m.reserve)}`);
   return (
     <Section header={m.label}>
       <Row title="Доходы" value={<Money value={m.income} />} />
@@ -401,27 +471,43 @@ function ForecastMonthCard({ m }: { m: ForecastMonth }) {
         subtitle={parts.length > 0 ? capitalize(parts.join(' · ')) : undefined}
         value={<Money value={m.expenses} />}
       />
+      {reserve && (
+        <Row
+          title="Резерв по лимитам"
+          subtitle="Повседневные траты: остаток лимитов · входит в расходы"
+          value={<Money value={m.reserve} />}
+        />
+      )}
       {!isZero(m.transfers) && (
         <Row title="Переводы в сбережения / из сбережений" value={<Money value={m.transfers} signed />} />
       )}
       <Row title="Остаток на конец" value={<Money value={m.end} />} />
       <Row title="Запас над подушкой" value={<Money value={m.overCushion} />} />
+      {/* «Кредиты (погашение кредитки, справочно)»: in no sum — the card's spending is already in «Расходы» */}
+      {card && (
+        <Row
+          icon="card"
+          iconTone="muted"
+          title="Кредиты"
+          subtitle={card.auto ? `${CARD_REPAYMENT_LABEL} ${card.day}-го · справочно, не в расходах` : 'Автопогашение выключено'}
+          value={<Money value={card.amount} tone="plain" />}
+          valueTone="muted"
+        />
+      )}
     </Section>
   );
 }
 
-function WeeksTable({ weeks }: { weeks: ForecastWeek[] }) {
+function WeeksTable({ weeks, reserve }: { weeks: ForecastWeek[]; reserve: boolean }) {
   // transfers to or from savings: a column only when some week has them
   const transfers = weeks.some((w) => !isZero(w.transfers));
+  const footer = [
+    'Значком отмечены недели, которые заканчиваются ниже подушки.',
+    reserve ? 'Резерв — повседневные траты по лимитам, поровну на каждый день месяца; входит в расходы.' : '',
+    transfers ? 'Переводы — в сбережения (−) и из сбережений (+).' : '',
+  ].filter(Boolean).join(' ');
   return (
-    <Section
-      header="По неделям"
-      footer={
-        transfers
-          ? 'Значком отмечены недели, которые заканчиваются ниже подушки. Переводы — в сбережения (−) и из сбережений (+).'
-          : 'Значком отмечены недели, которые заканчиваются ниже подушки.'
-      }
-    >
+    <Section header="По неделям" footer={footer}>
       <ScrollTable label="По неделям">
         <thead>
           <tr>
@@ -429,6 +515,7 @@ function WeeksTable({ weeks }: { weeks: ForecastWeek[] }) {
             <th scope="col">Остаток</th>
             <th scope="col">Доходы</th>
             <th scope="col">Расходы</th>
+            {reserve && <th scope="col">Резерв</th>}
             {transfers && <th scope="col">Переводы</th>}
           </tr>
         </thead>
@@ -454,6 +541,11 @@ function WeeksTable({ weeks }: { weeks: ForecastWeek[] }) {
                 <td>
                   <Money value={w.expenses} />
                 </td>
+                {reserve && (
+                  <td>
+                    <Money value={w.reserve} />
+                  </td>
+                )}
                 {transfers && (
                   <td>
                     <Money value={w.transfers} signed />

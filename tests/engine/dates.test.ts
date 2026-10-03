@@ -5,6 +5,7 @@ import {
   addMonths,
   clampDay,
   dateIn,
+  daysFromTo,
   daysInMonth,
   forecastMonths,
   inAccountingYear,
@@ -145,5 +146,15 @@ describe('month labels', () => {
       const ym = addMonths('2026-01', k);
       expect(parseMonthLabel(monthLabel(ym))).toBe(ym);
     }
+  });
+});
+
+describe('daysFromTo', () => {
+  it('counts both ends, across months and a leap day; 0 when the end is before the start', () => {
+    expect(daysFromTo('2026-10-15', '2026-10-31')).toBe(17);
+    expect(daysFromTo('2026-10-31', '2026-10-31')).toBe(1);
+    expect(daysFromTo('2028-02-28', '2028-03-01')).toBe(3);
+    expect(daysFromTo('2026-12-31', '2027-01-01')).toBe(2);
+    expect(daysFromTo('2026-11-01', '2026-10-31')).toBe(0);
   });
 });

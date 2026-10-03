@@ -2,13 +2,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACCOUNT_TYPE_LABEL,
+  CARD_REPAYMENT_LABEL,
   DUPLICATE_LABEL,
+  FREE_AFTER_SAVINGS_LABEL,
   JOURNAL_STATUS_LABEL,
   KIND_LABEL,
   MOVEMENT_SOURCE_LABEL,
   PRIORITIES,
+  ROW_CHECK_LABEL,
   SAVINGS_NOTE,
   SOURCE_LABEL,
+  TO_SAVINGS_LABEL,
 } from '../../src/engine';
 import * as ioLabels from '../../src/io/labels';
 
@@ -45,6 +49,19 @@ describe('engine labels', () => {
 
   it('names what an item may duplicate', () => {
     expect(DUPLICATE_LABEL).toEqual({ journal: 'Запланированные', recurring: 'Постоянные', purchase: 'Покупки' });
+  });
+
+  it('words the checks of a row exactly as the tracker’s «Дубль или проверка» does', () => {
+    expect(ROW_CHECK_LABEL).toEqual({
+      looksLikeTransfer: 'Похоже на перевод — если деньги пришли с вашей карты, выберите тип «Перевод»',
+      noTarget: 'Перевод: укажите «На счёт»',
+      sameAccount: 'Перевод: «Счёт» = «На счёт»',
+    });
+  });
+
+  it('names the lines of «Месяц» under the categories as the tracker does', () => {
+    expect([TO_SAVINGS_LABEL, FREE_AFTER_SAVINGS_LABEL, CARD_REPAYMENT_LABEL])
+      .toEqual(['Переводы в накопления', 'Свободно после накоплений', 'Погашение кредитки']);
   });
 
   it('lists the priorities in the tracker order', () => {

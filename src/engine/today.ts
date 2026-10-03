@@ -1,6 +1,6 @@
 // «Сегодня»: what is due in the next days (plus everything overdue) and paying it in one tap.
 import { accountingMonths, addDays, inAccountingYear, ymOf } from './dates';
-import type { Data, ISODate, JournalRow, Purchase, YM } from './model';
+import type { Data, ISODate, JournalRow, OpKind, Purchase, YM } from './model';
 import { opt } from './opt';
 import { journalExpected, journalMonth, purchasePlan, recurringDate, recurringDue } from './rules';
 
@@ -13,15 +13,15 @@ export interface UpcomingItem {
   date: ISODate;
   what: string;
   amount: number; // expected (planned) amount
-  kind: 'expense' | 'income';
-  overdue: boolean; // an expense dated before today
+  kind: OpKind; // a planned or recurring transfer is marked done like any other item
+  overdue: boolean; // an expense dated before today (an income or a transfer is never overdue)
 }
 
 export type PayTarget = Pick<UpcomingItem, 'source' | 'id' | 'ym'>;
 
 /**
  * Unpaid items of the accounting year dated up to today + days: journal rows (not paid or cancelled,
- * no fact, with a plan), due recurring payments without a mark, purchases not bought yet.
+ * no fact, with a plan), due recurring payments without a mark, purchases not bought yet; transfers among them too.
  * Older unpaid items stay in the list; expenses among them are overdue.
  */
 export function upcoming(data: Data, today: ISODate, days = 7): UpcomingItem[] {

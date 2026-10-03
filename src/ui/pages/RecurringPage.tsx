@@ -1,7 +1,7 @@
 // Page «Постоянные платежи» (registered as 'recurring' in src/ui/pages.ts); owner D5.
-// Expenses and incomes apart, each with its rhythm, day, period, account and amount; on top the
-// average per month as in the tracker (amount / «раз в N мес.»). A row opens RecurringForm, where
-// the months are marked.
+// Expenses, incomes and transfers apart, each with its rhythm, day, period, account («Со счёта → На счёт» for a
+// transfer) and amount; on top the average per month as in the tracker (amount / «раз в N мес.»; transfers are in
+// neither). A row opens RecurringForm, where the months are marked.
 import { monthlyAverage, opt } from '../../engine';
 import type { Data, ISODate, Recurring } from '../../engine';
 import { formatDate } from '../format';
@@ -25,6 +25,10 @@ function describe(d: Data, r: Recurring): string {
   if (from !== undefined && to !== undefined) parts.push(`с\u00a0${formatDate(from)} по\u00a0${formatDate(to)}`);
   else if (from !== undefined) parts.push(`с\u00a0${formatDate(from)}`);
   else if (to !== undefined) parts.push(`по\u00a0${formatDate(to)}`);
+  if (r.kind === 'transfer') {
+    parts.push(`${accountName(d, opt(r.account)) || 'счёт не указан'} → ${accountName(d, opt(r.toAccount)) || 'не указан'}`);
+    return dotted(parts);
+  }
   const account = accountName(d, opt(r.account));
   if (account) parts.push(account);
   return dotted(parts);
@@ -38,7 +42,7 @@ function RecurringRow({ d, r, now }: { d: Data; r: Recurring; now: ISODate }) {
       title={r.what}
       subtitle={describe(d, r)}
       value={<Money value={r.amount} tone="plain" />}
-      valueTone={ended ? 'muted' : r.kind === 'income' ? 'green' : 'default'}
+      valueTone={ended || r.kind === 'transfer' ? 'muted' : r.kind === 'income' ? 'green' : 'default'}
       onClick={() => openSheet('recurring', { initial: r })}
     />
   );
@@ -49,6 +53,7 @@ export function RecurringPage(_props: RoutedPageProps) {
   const now = today();
   const expenses = d.recurring.filter((r) => r.kind === 'expense');
   const incomes = d.recurring.filter((r) => r.kind === 'income');
+  const transfers = d.recurring.filter((r) => r.kind === 'transfer');
   const add = () => openSheet('recurring');
   const hint = 'Коснитесь платежа, чтобы изменить его или отметить месяцы.';
 
@@ -74,15 +79,22 @@ export function RecurringPage(_props: RoutedPageProps) {
             <StatCard label="Доходы в месяц" value={monthlyAverage(d.recurring, 'income')} sub="в среднем" tone="pos" />
           </StatGrid>
           {expenses.length > 0 && (
-            <Section header="Расходы" footer={incomes.length === 0 ? hint : undefined}>
+            <Section header="Расходы" footer={incomes.length === 0 && transfers.length === 0 ? hint : undefined}>
               {expenses.map((r) => (
                 <RecurringRow key={r.id} d={d} r={r} now={now} />
               ))}
             </Section>
           )}
           {incomes.length > 0 && (
-            <Section header="Доходы" footer={hint}>
+            <Section header="Доходы" footer={transfers.length === 0 ? hint : undefined}>
               {incomes.map((r) => (
+                <RecurringRow key={r.id} d={d} r={r} now={now} />
+              ))}
+            </Section>
+          )}
+          {transfers.length > 0 && (
+            <Section header="Переводы" footer={`Не доходы и не расходы: деньги переходят между вашими счетами. ${hint}`}>
+              {transfers.map((r) => (
                 <RecurringRow key={r.id} d={d} r={r} now={now} />
               ))}
             </Section>

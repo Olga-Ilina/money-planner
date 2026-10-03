@@ -524,9 +524,11 @@ describe('Today — helpers', () => {
     some.operations = some.operations.filter((o) => o.id !== 'o-kafe');
     some.recurring = some.recurring.map((r) => (r.id === 'r-bonus' ? { ...r, account: undefined } : r)); // one mark
     some.recurring = some.recurring.map((r) => (r.id === 'r-podpiska' ? { ...r, account: undefined } : r)); // one mark
-    some.operations.push({ id: 'o-t', date: '2026-10-30', kind: 'transfer', what: 'Перевод', amount: 5, account: ACC.card }); // not a check here
+    // a transfer without «На счёт» is the tracker's check «Перевод: укажите «На счёт»» (spec 2026-10-01-planned-transfers)
+    some.operations.push({ id: 'o-t', date: '2026-10-30', kind: 'transfer', what: 'Перевод', amount: 5, account: ACC.card });
     expect(shown(some)).toEqual([
       ['unassigned', 'Оплачено без счёта', 2],
+      ['transfers', 'Проверьте переводы', 1],
       ['outOfYear', 'Вне учётного года', 1],
     ]);
   });

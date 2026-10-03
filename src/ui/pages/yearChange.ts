@@ -4,17 +4,20 @@
 // count in the balances — from «Дата остатков» on (journal rows by accounting month, operations by date).
 import { balances, dateInBalances, inAccountingYear, journalMonth, monthInBalances, ymOf } from '../../engine';
 import type { Data, ISODate, YM } from '../../engine';
+import { outOfYearMonths } from './categoriesEdit';
 import { plural } from './usageText';
 
 export interface OutOfYear {
   marks: number;
   journal: number;
   operations: number;
+  /** Own limits of expense categories for a month (`monthLimits`); they stay in the data, the sheet shows 12 months only. */
+  monthLimits: number;
 }
 
 const withStart = (d: Data, accountingStart: YM): Data => ({ ...d, settings: { ...d.settings, accountingStart } });
 
-/** Recurring marks, journal rows and operations outside the accounting year that starts at `accountingStart`. */
+/** Recurring marks, journal rows, operations and month limits outside the accounting year that starts at `accountingStart`. */
 export function outOfYear(d: Data, accountingStart: YM): OutOfYear {
   const s = withStart(d, accountingStart).settings;
   const outside = (ym: YM) => !inAccountingYear(ym, s);
@@ -22,6 +25,7 @@ export function outOfYear(d: Data, accountingStart: YM): OutOfYear {
     marks: d.recurring.reduce((n, r) => n + Object.keys(r.marks).filter(outside).length, 0),
     journal: d.journal.filter((r) => outside(journalMonth(r, s))).length,
     operations: d.operations.filter((o) => outside(ymOf(o.date))).length,
+    monthLimits: d.categories.expense.reduce((n, c) => n + outOfYearMonths(c, s).length, 0),
   };
 }
 
@@ -53,6 +57,10 @@ export function yearChangeNote(d: Data, accountingStart: YM, today: ISODate): st
   else if (rows === 0) text = `Вне учётного года: ${parts.join(', ')} — они не попадут ни в отчёты, ни в остатки.`;
   else {
     text = `Вне учётного года: ${parts.join(', ')} — их не будет в ленте и отчётах, а отметки не попадут и в остатки.`;
+  }
+  // month limits stay in the data (and the reserve); the category's sheet shows and clears those outside the year
+  if (out.monthLimits > 0) {
+    text += ` Лимиты по месяцам вне учётного года: ${out.monthLimits} — они останутся, убрать их можно в «Категории и лимиты».`;
   }
   return balancesChange(d, accountingStart, today) ? `${text} Остатки счетов изменятся.` : text;
 }

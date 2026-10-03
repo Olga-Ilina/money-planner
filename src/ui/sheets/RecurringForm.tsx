@@ -2,6 +2,8 @@
 // What, kind, category, amount, account, day, «как часто», «действует с / по», and the marks of the
 // 12 accounting months: a tap marks a month ✓ (paid as planned) or clears its mark; «Сумма за …»
 // writes another amount. Months without a payment (by the rhythm and the dates being edited) are pale.
+// A regular transfer (spec 2026-10-01-planned-transfers): «Со счёта» and a different «На счёт», no category; a mark
+// is a transfer made. «Доход» on a savings account shows the tracker's hint «Похоже на перевод…».
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { KIND_LABEL, accountingMonths, monthLabel, newId, opt, recurringDue } from '../../engine';
 import type { Data, Mark, Recurring, YM } from '../../engine';
@@ -13,7 +15,7 @@ import {
 } from '../kit';
 import type { FieldChange, Option } from '../kit';
 import { appData } from '../state';
-import { accountOptions, compact, hasErrors, lowerFirst, nameOptions, upsert } from './planForm';
+import { accountOptions, compact, hasErrors, lowerFirst, nameOptions, transferErrors, transferHint, upsert } from './planForm';
 import type { Errors } from './planForm';
 import './RecurringForm.css';
 
@@ -26,7 +28,7 @@ export interface RecurringFormProps {
 type Kind = Recurring['kind'];
 type Marks = Record<YM, Mark>;
 
-const KINDS: Option<Kind>[] = (['expense', 'income'] as const).map((k) => ({ value: k, label: KIND_LABEL[k] }));
+const KINDS: Option<Kind>[] = (['expense', 'income', 'transfer'] as const).map((k) => ({ value: k, label: KIND_LABEL[k] }));
 
 const EVERY = [1, 2, 3, 4, 6, 12];
 
@@ -63,7 +65,7 @@ function defaultAccount(d: Data): string | undefined {
   return (d.accounts.find((a) => a.type === 'debit') ?? d.accounts.find((a) => a.type !== 'credit') ?? d.accounts[0])?.id;
 }
 
-type Field = 'what' | 'amount' | 'day' | 'to';
+type Field = 'what' | 'amount' | 'day' | 'to' | 'account' | 'toAccount';
 
 export function RecurringForm({ open, onClose, initial }: RecurringFormProps) {
   const d = appData();
@@ -72,6 +74,7 @@ export function RecurringForm({ open, onClose, initial }: RecurringFormProps) {
   const [category, setCategory] = useState<string | undefined>(opt(initial?.category));
   const [amount, setAmount] = useState<number | undefined>(initial?.amount);
   const [account, setAccount] = useState<string | undefined>(initial ? opt(initial.account) : defaultAccount(d));
+  const [toAccount, setToAccount] = useState<string | undefined>(opt(initial?.toAccount));
   const [day, setDay] = useState<number | undefined>(initial?.day);
   const [every, setEvery] = useState<number>(Math.max(1, initial?.every ?? 1));
   const [from, setFrom] = useState<string | undefined>(opt(initial?.from));
@@ -83,12 +86,14 @@ export function RecurringForm({ open, onClose, initial }: RecurringFormProps) {
   const v = useFieldValidity();
 
   const categories = (k: Kind) => (k === 'income' ? d.categories.income : d.categories.expense).map((c) => c.name);
+  const transfer = kind === 'transfer';
 
   const validate = (): Errors<Field> => ({
     what: what?.trim() ? undefined : 'Введите название',
     amount: amount !== undefined && amount > 0 ? undefined : 'Введите сумму',
     day: day !== undefined ? undefined : 'Укажите день',
     to: from !== undefined && to !== undefined && to < from ? 'Не раньше даты начала' : undefined,
+    ...transferErrors({ kind, account, toAccount }),
   });
   const errors: Errors<Field> = tried ? validate() : {};
 
@@ -109,13 +114,14 @@ export function RecurringForm({ open, onClose, initial }: RecurringFormProps) {
       id: initial?.id ?? newId(),
       what: (what ?? '').trim(),
       kind,
-      category,
+      category: transfer ? undefined : category,
       amount: amount ?? 0,
       day,
       every: every > 1 ? every : undefined,
       from,
       to,
       account,
+      toAccount: transfer ? toAccount : undefined,
       marks,
     });
     const cur = appData();
@@ -163,21 +169,45 @@ export function RecurringForm({ open, onClose, initial }: RecurringFormProps) {
           error={errors.what}
           autoFocus={!initial}
         />
-        <SelectField
-          label="Категория"
-          value={category}
-          options={nameOptions(categories(kind), category)}
-          onChange={setCategory}
-          placeholder="Без категории"
-        />
+        {!transfer && (
+          <SelectField
+            label="Категория"
+            value={category}
+            options={nameOptions(categories(kind), category)}
+            onChange={setCategory}
+            placeholder="Без категории"
+          />
+        )}
         <AmountField label="Сумма" value={amount} onChange={v.field('amount', setAmount)} error={errors.amount} />
-        <SelectField
-          label="Счёт"
-          value={account}
-          options={accountOptions(d, account)}
-          onChange={setAccount}
-          placeholder="Без счёта"
-        />
+        {transfer ? (
+          <>
+            <SelectField
+              label="Со счёта"
+              value={account}
+              options={accountOptions(d, account)}
+              onChange={setAccount}
+              placeholder="Не выбран"
+              error={errors.account}
+            />
+            <SelectField
+              label="На счёт"
+              value={toAccount}
+              options={accountOptions(d, toAccount)}
+              onChange={setToAccount}
+              placeholder="Не выбран"
+              error={errors.toAccount}
+            />
+          </>
+        ) : (
+          <SelectField
+            label="Счёт"
+            value={account}
+            options={accountOptions(d, account)}
+            onChange={setAccount}
+            placeholder="Без счёта"
+            hint={transferHint(d, kind, account)}
+          />
+        )}
       </Section>
       <Section footer="Пустые даты — платёж действует всегда. День 31 в коротком месяце — последний день.">
         <NumberField

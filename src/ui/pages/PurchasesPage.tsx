@@ -9,7 +9,7 @@ import { EmptyState, Icon, Money, Page, ProgressBar, Row, Section, StatCard, Sta
 import type { RoutedPageProps } from '../nav';
 import { openSheet } from '../sheets/host';
 import { DOT, dotted } from '../sheets/planForm';
-import { accountName, appData } from '../state';
+import { accountName, appData, today } from '../state';
 import './PurchasesPage.css';
 
 /** How the engine's purchaseStatus («Хватит ли денег») is shown. */
@@ -87,7 +87,8 @@ export function PurchasesPage(_props: RoutedPageProps) {
   const plans = d.purchases.filter((p) => !p.bought);
   const bought = d.purchases.filter((p) => p.bought);
   const needsForecast = plans.some((p) => opt(p.date) !== undefined);
-  const fc = useMemo(() => (needsForecast ? forecast(d) : null), [d, needsForecast]);
+  const day = today();
+  const fc = useMemo(() => (needsForecast ? forecast(d, day) : null), [d, day, needsForecast]);
   const add = () => openSheet('purchase');
 
   const cost = plans.reduce((s, p) => s + (p.cost ?? 0), 0);

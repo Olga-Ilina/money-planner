@@ -21,6 +21,7 @@ import { PERCENT_FORMAT, accountsReport, forecastReport, monthReport, yearReport
 import type { ReportFile } from '../../src/io/reports';
 import { ACC, scenario } from '../engine/scenario';
 import { savingsScenario } from '../engine/savingsScenario';
+import { TR_TODAY, transfersScenario } from '../engine/transfersScenario';
 
 const OCT = '2026-10';
 const TODAY = '2026-09-30';
@@ -220,7 +221,7 @@ describe('monthReport — October of the scenario', () => {
   });
 
   describe('«Движения»', () => {
-    const HEADERS = ['Дата', 'Источник', 'Тип', 'Категория', 'Что', 'План', 'Факт', 'Статус', 'Счёт', 'На счёт', 'Возможный дубль'];
+    const HEADERS = ['Дата', 'Источник', 'Тип', 'Категория', 'Что', 'План', 'Факт', 'Статус', 'Счёт', 'На счёт', 'Дубль или проверка'];
 
     it('lists every item of the month feed', async () => {
       const ws = sheet(await open(await monthReport(data, OCT)), 'Движения');
@@ -276,7 +277,7 @@ describe('monthReport — October of the scenario', () => {
     it('shows source, kind, status and account names in Russian', async () => {
       const ws = sheet(await open(await monthReport(data, OCT)), 'Движения');
       const line = (id: string) =>
-        ['Источник', 'Тип', 'Категория', 'Статус', 'Счёт', 'На счёт', 'Возможный дубль']
+        ['Источник', 'Тип', 'Категория', 'Статус', 'Счёт', 'На счёт', 'Дубль или проверка']
           .map((h) => text(ws, rowOfItem(ws, items, id), h) ?? '');
       expect(line('o-snyatie')).toEqual(['Операция', 'Перевод', '', 'Оплачено', 'Карта', 'Наличные', '']);
       expect(line('o-kafe')).toEqual(['Операция', 'Расход', 'Продукты', 'Оплачено', 'Карта', '', 'Запланированные']);
@@ -293,7 +294,7 @@ describe('monthReport — October of the scenario', () => {
       const ws = sheet(await open(await monthReport(data2, '2026-12')), 'Движения');
       expect(text(ws, rowOfItem(ws, dec, 'p-noutbuk'), 'Источник')).toBe('Покупка');
       const perenos = rowOfItem(ws, dec, 'j-perenos');
-      expect([text(ws, perenos, 'Статус'), text(ws, perenos, 'Возможный дубль'), text(ws, perenos, 'Счёт')])
+      expect([text(ws, perenos, 'Статус'), text(ws, perenos, 'Дубль или проверка'), text(ws, perenos, 'Счёт')])
         .toEqual(['Перенесено', 'Покупки', undefined]);
     });
 
@@ -781,6 +782,29 @@ describe('forecastReport — the scenario, forecast from October 2026', () => {
   });
 });
 
+describe('forecastReport — the reserve by limits', () => {
+  it('a «Резерв по лимитам» column in «Месяцы» (after «Покупки») and «Недели» (after «Расходы»), the engine’s numbers', async () => {
+    const d = scenario();
+    d.categories.expense[1] = { name: 'Продукты', limit: 400, monthLimits: { '2026-12': 600 } };
+    const g = forecast(d, TODAY);
+    expect(g.months.map((m) => m.reserve).every((r) => r > 0)).toBe(true);
+    const wb = await open(await forecastReport(d, TODAY));
+    const months = sheet(wb, 'Месяцы');
+    expect(headers(months)).toEqual([
+      'Месяц', 'Доходы', 'Расходы', 'Постоянные', 'Разовые', 'Покупки', 'Резерв по лимитам', 'Переводы в / из сбережений',
+      'Остаток на конец', 'Запас над подушкой',
+    ]);
+    expect(dataRows(months).map((r) => [num(months, r, 'Резерв по лимитам'), num(months, r, 'Расходы'), num(months, r, 'Остаток на конец')]))
+      .toEqual(g.months.map((m) => [m.reserve, m.expenses, m.end]));
+    const weeks = sheet(wb, 'Недели');
+    expect(headers(weeks)).toEqual([
+      'Неделя', 'С', 'По', 'Доходы', 'Расходы', 'Резерв по лимитам', 'Переводы в / из сбережений', 'Остаток на конец', 'Ниже подушки',
+    ]);
+    expect(dataRows(weeks).map((r) => num(weeks, r, 'Резерв по лимитам')))
+      .toEqual(g.weeks.map((w) => w.reserve));
+  });
+});
+
 describe('forecastReport — savings: only free money, with the transfers to and from savings', () => {
   it('«Месяцы» and «Недели» carry the engine’s transfers (−80 / +30 / +18) and the free-money ends', async () => {
     const sav = savingsScenario();
@@ -849,5 +873,75 @@ describe('text cells keep an Excel escape literally, like the backup', () => {
     const own = wb.worksheets.find((ws) => cellText(ws.getCell('A1').value) === '_x0042_ — движения');
     expect(own).toBeDefined();
     expect(dataRows(own!).map((r) => text(own!, r, 'Что'))).not.toContain('B');
+  });
+});
+
+// Planned and recurring transfers (spec 2026-10-01-planned-transfers): the tracker's transfers scenario, November.
+describe('monthReport and accountsReport — transfers into savings (the tracker’s scenario, today 20.12.2026)', () => {
+  const NOV = '2026-11';
+  const tr = transfersScenario();
+  const s = monthSummary(tr, NOV);
+
+  it('«Итоги»: «Переводы в накопления», «Свободно после накоплений», «Погашение кредитки (10-го)» after the totals', async () => {
+    const ws = sheet(await open(await monthReport(tr, NOV, TR_TODAY)), 'Итоги');
+    const labels = [
+      'Переводы в накопления план', 'Переводы в накопления факт', 'Свободно после накоплений план',
+      'Свободно после накоплений факт', 'Погашение кредитки (10-го) план', 'Погашение кредитки (10-го) факт',
+    ];
+    expect(labels.map((l) => num(ws, l, 'Сумма'))).toEqual([150, 200, 1840, 1750, 105, 105]);
+    expect([num(ws, 'Расход план', 'Сумма'), num(ws, 'Расход факт', 'Сумма')]).toEqual([1020, 1065]); // no transfers
+    expect(lastRowOf(ws, 'Погашение кредитки — справочно: покупки по кредитке уже в расходах, списание — в остатках'))
+      .toBeGreaterThan(rowOf(ws, 'Погашение кредитки (10-го) факт'));
+  });
+
+  it('«Категории»: ИТОГО without transfers; «Переводы в накопления» and «Свободно после накоплений» below the table', async () => {
+    const ws = sheet(await open(await monthReport(tr, NOV, TR_TODAY)), 'Категории');
+    expect([num(ws, 'ИТОГО', 'План'), num(ws, 'ИТОГО', 'Факт')]).toEqual([1020, 1065]);
+    expect(bodyRows(ws).map((r) => cellText(ws.getRow(r).getCell(1).value))).not.toContain('Переводы в накопления');
+    const r = lastRowOf(ws, 'Переводы в накопления');
+    expect([ws.getRow(r).getCell(col(ws, 'План')).value, ws.getRow(r).getCell(col(ws, 'Факт')).value]).toEqual([150, 200]);
+    const f = lastRowOf(ws, 'Свободно после накоплений');
+    expect([ws.getRow(f).getCell(col(ws, 'План')).value, ws.getRow(f).getCell(col(ws, 'Факт')).value]).toEqual([1840, 1750]);
+    expect(ws.getRow(r).getCell(col(ws, 'Лимит')).value).toBeNull();
+  });
+
+  it('«Движения»: planned and recurring transfers with «На счёт»; «Переводы» totals their facts', async () => {
+    const items = monthItems(tr, NOV);
+    const ws = sheet(await open(await monthReport(tr, NOV, TR_TODAY)), 'Движения');
+    const row = rowOfItem(ws, items, 'r-kopilka');
+    expect([text(ws, row, 'Источник'), text(ws, row, 'Тип'), text(ws, row, 'Счёт'), text(ws, row, 'На счёт'), num(ws, row, 'Факт')])
+      .toEqual(['Постоянный', 'Перевод', 'Карта', 'Копилка', 400]);
+    const j = rowOfItem(ws, items, 'j-2');
+    expect([text(ws, j, 'Источник'), text(ws, j, 'Тип'), text(ws, j, 'Счёт'), text(ws, j, 'На счёт'), num(ws, j, 'План')])
+      .toEqual(['Запланированные', 'Перевод', 'Копилка', 'Карта', 150]);
+    expect(num(ws, 'Переводы', 'Факт')).toBe(sum(items.filter((i) => i.kind === 'transfer').map((i) => i.fact)));
+    expect([num(ws, 'Расходы', 'План'), num(ws, 'Расходы', 'Факт')]).toEqual([s.expensePlan, s.expenseFact]);
+  });
+
+  it('«Движения»: «Дубль или проверка» has the checks of a row in the tracker’s words; a transfer shows no category', async () => {
+    const imported = transfersScenario(); // a category typed on a transfer row of the tracker is kept, but not shown
+    imported.journal = imported.journal.map((r) => (r.id === 'j-2' ? { ...r, category: 'Продукты' } : r));
+    imported.recurring = imported.recurring.map((r) => (r.id === 'r-kopilka' ? { ...r, category: 'Накопления' } : r));
+    const items = monthItems(imported, NOV);
+    const ws = sheet(await open(await monthReport(imported, NOV, TR_TODAY)), 'Движения');
+    const line = (id: string) => ['Тип', 'Категория', 'Дубль или проверка'].map((h) => text(ws, rowOfItem(ws, items, id), h) ?? '');
+    expect(line('j-7')).toEqual(['Перевод', '', 'Перевод: укажите «На счёт»']);
+    expect(line('j-8')).toEqual(['Перевод', '', 'Перевод: «Счёт» = «На счёт»']);
+    expect(line('r-kuda')).toEqual(['Перевод', '', 'Перевод: укажите «На счёт»']);
+    expect(line('r-procenty')).toEqual(['Доход', 'Проценты', 'Похоже на перевод — если деньги пришли с вашей карты, выберите тип «Перевод»']);
+    expect(line('j-2')).toEqual(['Перевод', '', '']);
+    expect(line('r-kopilka')).toEqual(['Перевод', '', '']);
+    expect(line('r-arenda')).toEqual(['Расход', 'Жильё', '']);
+  });
+
+  it('accountsReport: balances and movements count planned and recurring transfers', async () => {
+    const wb = await open(await accountsReport(tr, TR_TODAY, '2026-10'));
+    const accounts = sheet(wb, 'Счета');
+    expect(dataRows(accounts).map((r) => [text(accounts, r, 'Счёт'), num(accounts, r, 'Переводы'), num(accounts, r, 'Сейчас')]))
+      .toEqual([['Карта', -1350, 6650], ['Наличные', -40, 60], ['Кредитка', 210, -20], ['Копилка', 1150, 2267], ['Вклад', -50, 450]]);
+    const box = sheet(wb, 'Копилка');
+    expect(dataRows(box).map((r) => [text(box, r, 'Что'), num(box, r, 'Сумма')])).toEqual([
+      ['В копилку', 500], ['В копилку разово', 300], ['Перевод с карты', 100], ['Копилка → вклад', -50], ['Проценты', 10],
+    ]);
   });
 });

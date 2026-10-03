@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Data } from '../../../src/engine';
 import {
-  addCategory, categoryNameError, categoryUsage, moveCategory, removeCategory, renameCategory, setLimit, usageText,
+  addCategory, categoryNameError, categoryUsage, clearOutOfYearMonthLimits, moveCategory, outOfYearMonths, removeCategory,
+  renameCategory, setLimit, setMonthLimit, usageText,
 } from '../../../src/ui/pages/categoriesEdit';
 import { scenario } from '../../engine/scenario';
 
@@ -172,6 +173,47 @@ describe('addCategory / setLimit / moveCategory', () => {
     const cleared = setLimit(d, 'Продукты', undefined).categories.expense[1];
     expect(cleared).toEqual({ name: 'Продукты' });
     expect(cleared && 'limit' in cleared).toBe(false);
+  });
+
+  it('the usual limit and the month limits are set apart: neither clears the other', () => {
+    let d = setMonthLimit(scenario(), 'Продукты', '2026-12', 400);
+    d = setMonthLimit(d, 'Продукты', '2026-11', 0); // 0 is a month limit
+    expect(d.categories.expense[1]).toEqual({ name: 'Продукты', monthLimits: { '2026-11': 0, '2026-12': 400 } });
+    expect(Object.keys(d.categories.expense[1]?.monthLimits ?? {})).toEqual(['2026-11', '2026-12']); // by month
+    d = setLimit(d, 'Продукты', 300);
+    expect(d.categories.expense[1]).toEqual({ name: 'Продукты', limit: 300, monthLimits: { '2026-11': 0, '2026-12': 400 } });
+    d = setLimit(setMonthLimit(d, 'Продукты', '2026-11', undefined), 'Продукты', undefined);
+    expect(d.categories.expense[1]).toEqual({ name: 'Продукты', monthLimits: { '2026-12': 400 } });
+    const cleared = setMonthLimit(d, 'Продукты', '2026-12', undefined).categories.expense[1];
+    expect(cleared).toEqual({ name: 'Продукты' });
+    expect(cleared && 'monthLimits' in cleared).toBe(false);
+  });
+
+  it('month limits outside the accounting year (Oct 2026 – Sep 2027): listed, and cleared alone', () => {
+    const d = scenario();
+    d.categories.expense[1] = { name: 'Продукты', limit: 300, monthLimits: { '2025-12': 70, '2026-12': 400, '2027-09': 5, '2027-10': 60 } };
+    expect(outOfYearMonths(d.categories.expense[1]!, d.settings)).toEqual(['2025-12', '2027-10']);
+    expect(outOfYearMonths(d.categories.expense[0]!, d.settings)).toEqual([]);
+    const next = clearOutOfYearMonthLimits(d, 'Продукты');
+    expect(next.categories.expense[1]).toEqual({ name: 'Продукты', limit: 300, monthLimits: { '2026-12': 400, '2027-09': 5 } });
+    expect(next.categories.expense.filter((_, i) => i !== 1)).toEqual(d.categories.expense.filter((_, i) => i !== 1));
+    expect(d.categories.expense[1]?.monthLimits).toEqual({ '2025-12': 70, '2026-12': 400, '2027-09': 5, '2027-10': 60 }); // not in place
+  });
+
+  it('clearing the only month limits drops `monthLimits`; with nothing outside, the same Data', () => {
+    const d = scenario();
+    d.categories.expense[1] = { name: 'Продукты', monthLimits: { '2025-12': 70 } };
+    const next = clearOutOfYearMonthLimits(d, 'Продукты');
+    expect(next.categories.expense[1]).toEqual({ name: 'Продукты' });
+    expect('monthLimits' in next.categories.expense[1]!).toBe(false);
+    expect(clearOutOfYearMonthLimits(scenario(), 'Продукты')).toEqual(scenario());
+    const inside = setMonthLimit(scenario(), 'Продукты', '2026-12', 400);
+    expect(clearOutOfYearMonthLimits(inside, 'Продукты')).toBe(inside);
+  });
+
+  it('a rename keeps the month limits', () => {
+    const d = renameCategory(setMonthLimit(scenario(), 'Продукты', '2026-12', 400), 'expense', 'Продукты', 'Еда');
+    expect(d.categories.expense[1]).toEqual({ name: 'Еда', monthLimits: { '2026-12': 400 } });
   });
 
   it('moves a category up or down; at the ends nothing changes', () => {

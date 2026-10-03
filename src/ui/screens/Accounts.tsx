@@ -1,7 +1,7 @@
 // Root screen of the «Счета» tab (spec §5): totals, the balance of every account now, the credit
 // card's statements, a transfer between accounts and the «Счета и движения» export. Owner: D3.
 // Savings accounts are outside «Всего» and the forecast: their own total, their own group of rows.
-import { ACCOUNT_TYPE_LABEL, balances, opt, warnings } from '../../engine';
+import { ACCOUNT_TYPE_LABEL, ROW_CHECK_LABEL, balances, opt, warnings } from '../../engine';
 import type { BalanceRow, Data, Warnings } from '../../engine';
 import { formatDate, formatMoney } from '../format';
 import { Banner, Button, EmptyState, Money, Page, Row, Section, StatCard, StatGrid } from '../kit';
@@ -100,6 +100,8 @@ function deletedInCreditSettings(d: Data): number {
 /** Rows that reach no balance, with what to do about them. */
 function BalanceWarnings({ d, w }: { d: Data; w: Warnings }) {
   const toFeed = { label: 'Открыть ленту', onClick: () => openFeed() };
+  // the rows with a check of a transfer (the tracker's «Дубль или проверка»), «Лента» filtered to them
+  const toTransfers = { label: 'Открыть ленту', onClick: () => openFeedCheck('transfers') };
   const inSettings = deletedInCreditSettings(d);
   const inRecords = w.unknownAccounts - inSettings; // the engine counts both
   return (
@@ -111,9 +113,20 @@ function BalanceWarnings({ d, w }: { d: Data; w: Warnings }) {
         </Banner>
       )}
       {w.transfersWithoutTarget > 0 && (
-        <Banner tone="warning" action={toFeed}>
+        <Banner tone="warning" action={toTransfers}>
           {`Переводов без счёта зачисления: ${w.transfersWithoutTarget}. `}
           Деньги ушли со счёта, но никуда не пришли — укажите, на какой счёт.
+        </Banner>
+      )}
+      {w.transfersToSameAccount > 0 && (
+        <Banner tone="warning" action={toTransfers}>
+          {`Переводов на тот же счёт: ${w.transfersToSameAccount}. `}
+          «Со счёта» и «На счёт» совпадают — выберите другой счёт.
+        </Banner>
+      )}
+      {w.incomeToSavings > 0 && (
+        <Banner tone="warning" action={toTransfers}>
+          {`Доходов на сберегательный счёт: ${w.incomeToSavings}. ${ROW_CHECK_LABEL.looksLikeTransfer}.`}
         </Banner>
       )}
       {inRecords > 0 && (

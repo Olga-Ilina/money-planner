@@ -9,7 +9,8 @@ import type { CellValue, Workbook, Worksheet } from 'exceljs';
 import type JSZip from 'jszip';
 import { accountingMonths, monthLabel, monthStart, newId, parseMonthLabel, SCHEMA_VERSION, ymOf } from '../engine';
 import type {
-  Account, CreditSettings, Data, Debt, ExpenseCategory, ISODate, JournalRow, Mark, Operation, Purchase, Recurring, Settings, YM,
+  Account, CreditSettings, Data, Debt, ExpenseCategory, ISODate, JournalRow, Mark, OpKind, Operation, Purchase, Recurring, Settings,
+  YM,
 } from '../engine';
 import { cellDate, cellNumber, cellText, criterionMatches, isFormula, unwrap } from './excel';
 import { ACCOUNT_TYPE_LABEL, CHECK, JOURNAL_STATUS_LABEL, KIND_LABEL, parseAccountType, parseKind, parseStatus } from './labels';
@@ -40,8 +41,18 @@ const PLANNED = 'Запланированные';
 const PLANNED_BEFORE_RENAME = 'Журнал';
 
 const SHEETS = ['Настройки', 'Операции', 'Счета', PLANNED, 'Постоянные', 'Покупки', 'Месяц', 'Долги'] as const;
-type SheetName = (typeof SHEETS)[number];
-type Sheets = Record<SheetName, Worksheet>;
+/**
+ * «Лимиты» (spec 2026-10-03-month-limits), right after «Месяц»: optional — a tracker built before it has the usual
+ * limits on «Месяц» C12:C41 instead. Row 5: B «Категория», C «Обычный лимит», D…O the 12 accounting months (formulas
+ * following Настройки C8/C9); rows 6…35 belong to Настройки J6:J35 (B is a formula of it).
+ */
+const LIMITS = 'Лимиты';
+/** The sheets in the order of the tracker's tabs (notes and overrides come in this order). */
+const TABS = ['Настройки', 'Операции', 'Счета', PLANNED, 'Постоянные', 'Покупки', 'Месяц', LIMITS, 'Долги'] as const;
+type SheetName = (typeof TABS)[number];
+type Sheets = Record<(typeof SHEETS)[number], Worksheet> & { [LIMITS]?: Worksheet };
+/** The columns of the 12 accounting months on «Лимиты». */
+const LIMIT_MONTH_COLS = ['D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O'];
 
 /**
  * Formula cells of the tracker where a typed constant replaces the calculation. In a table (`to: 'table'`) they go
@@ -50,16 +61,28 @@ type Sheets = Record<SheetName, Worksheet>;
  * account — Запланированные V, Операции T, Постоянные AF (the accounting-year expansion, rows 8–367) and AK (the forecast
  * expansion, rows 8–97), Покупки U — and Операции U, a transfer's effect on the free money (build_tracker.py 43–45,
  * 233, 334–338, 659, 682, 731). Files built before them have these cells empty.
+ * The helpers of planned and recurring transfers (layout contract 2026-10-02-transfers-layout §3, excel-planners
+ * feature/transfers): a transfer's effect on the free money, ±1 — Запланированные X, Постоянные AM (the accounting-year
+ * expansion) and AN (the forecast expansion) — and Постоянные AL, «На счёт» of the accounting-year expansion. Files
+ * built before them have these cells empty.
  */
 const FORMULA_AREAS: { sheet: SheetName; cols: string[]; from: number; to: number | 'table' }[] = [
   { sheet: 'Настройки', cols: ['C'], from: 10, to: 10 },
   { sheet: 'Операции', cols: ['B', 'J', 'K', 'Q', 'T', 'U'], from: 10, to: 'table' },
   { sheet: 'Счета', cols: ['E', 'F', 'G', 'H', 'I'], from: 10, to: 21 },
-  { sheet: PLANNED, cols: ['B', 'L', 'N', 'P', 'Q', 'R', 'S', 'T', 'U', 'V'], from: 10, to: 'table' },
+  { sheet: PLANNED, cols: ['B', 'L', 'N', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'X'], from: 10, to: 'table' },
   { sheet: 'Постоянные', cols: ['AF'], from: 8, to: 367 },
   { sheet: 'Постоянные', cols: ['AK'], from: 8, to: 97 },
+  { sheet: 'Постоянные', cols: ['AL', 'AM'], from: 8, to: 367 },
+  { sheet: 'Постоянные', cols: ['AN'], from: 8, to: 97 },
   { sheet: 'Покупки', cols: ['R', 'U'], from: 7, to: 'table' },
+  // with «Лимиты» only (limitsAreas): «Месяц» C12:C41, the effective limit of the chosen month
+  { sheet: LIMITS, cols: LIMIT_MONTH_COLS, from: 5, to: 5 },
+  { sheet: LIMITS, cols: ['B'], from: 6, to: 35 },
 ];
+
+/** «Месяц» C12:C41 are formulas once the tracker has «Лимиты»; before, they are the usual limits typed in. */
+const MONTH_LIMIT_FORMULAS = { sheet: 'Месяц', cols: ['C'], from: 12, to: 41 } as const;
 
 /** Headers of «Постоянные» (row 7) matched after collapsing whitespace, ignoring case. */
 const RECURRING_HEADERS = {
@@ -73,9 +96,18 @@ const OPERATION_INPUTS = ['C', 'D', 'E', 'F', 'G', 'H', 'I'];
 
 /**
  * The columns of «Запланированные» the import reads, except M «Месяц учёта»: that one is a formula unless a month is
- * typed over it (B, L, N and the helpers right of them are formulas).
+ * typed over it (B, L, N and the helpers right of them are formulas). In the layout with transfers also O «На счёт»
+ * (JOURNAL_TO), told by its header (JOURNAL_TO_HEADER on row 9): before it, O was an empty narrow column.
  */
 const JOURNAL_INPUTS = ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'];
+const JOURNAL_TO = 'O';
+
+/**
+ * «На счёт»: the header of Запланированные O9 («На счёт» and, on a second line, «(для перевода)»: compared from its
+ * start) and of «Постоянные» in the column right after the 12 months (compared in full), whitespace collapsed,
+ * ignoring case (layout contract 2026-10-02-transfers-layout §2).
+ */
+const TO_ACCOUNT_HEADER = 'на счёт';
 
 /** The columns of «Покупки» the import reads besides the name in C. */
 const PURCHASE_INPUTS = ['D', 'E', 'F', 'G', 'L', 'N', 'O', 'P'];
@@ -546,7 +578,8 @@ function trackerSheets(workbook: Workbook): Sheets {
       `В файле есть и лист ${quoted(PLANNED)}, и лист ${quoted(PLANNED_BEFORE_RENAME)} — в трекере должен остаться один.`,
     );
   }
-  return Object.fromEntries(SHEETS.map((name) => [name, found(name)])) as Sheets;
+  const limits = workbook.getWorksheet(LIMITS);
+  return { ...(Object.fromEntries(SHEETS.map((name) => [name, found(name)])) as Sheets), ...(limits ? { [LIMITS]: limits } : {}) };
 }
 
 /**
@@ -579,14 +612,21 @@ class Reader {
 
   constructor(private readonly s: Sheets) {}
 
+  /** A sheet the file has (only «Лимиты» may be missing, and nothing reads it then). */
+  private ws(sheet: SheetName): Worksheet {
+    const ws = this.s[sheet];
+    if (ws === undefined) throw new Error(`no sheet ${sheet}`);
+    return ws;
+  }
+
   /** Notes in tab order, and in reading order within a sheet. */
   get notes(): string[] {
-    return SHEETS.flatMap((name) => this.bySheet.get(name) ?? []);
+    return TABS.flatMap((name) => this.bySheet.get(name) ?? []);
   }
 
   /** The name the file gives the sheet: «Запланированные» may be «Журнал» in it. */
   private name(sheet: SheetName): string {
-    return this.s[sheet].name;
+    return this.ws(sheet).name;
   }
 
   /** «Лист «X», строка N, столбец Y» — what a note is about. */
@@ -602,7 +642,7 @@ class Reader {
 
   /** A cell through `parse`; a non-blank value that does not parse gets a note and is left out. */
   private parsed<T>(sheet: SheetName, col: string, row: number, parse: (v: CellValue) => T | undefined): T | undefined {
-    const v = cell(this.s[sheet], col, row);
+    const v = cell(this.ws(sheet), col, row);
     const value = parse(v);
     if (value === undefined && !isBlank(v)) {
       this.note(sheet, `${this.where(sheet, col, row)}: ${quoted(shown(v))} не распознано — не загружено`);
@@ -613,7 +653,7 @@ class Reader {
   /** `parsed`, and a number read from a text cell is noted too. */
   private read<T>(sheet: SheetName, col: string, row: number, parse: (v: CellValue) => T | undefined): T | undefined {
     const value = this.parsed(sheet, col, row, parse);
-    this.numberFromText(sheet, col, row, cell(this.s[sheet], col, row), value);
+    this.numberFromText(sheet, col, row, cell(this.ws(sheet), col, row), value);
     return value;
   }
 
@@ -630,7 +670,7 @@ class Reader {
    */
   private readTick<T>(sheet: SheetName, col: string, row: number, parse: (v: CellValue) => T | undefined): T | undefined {
     const value = this.read(sheet, col, row, parse);
-    const raw = unwrap(cell(this.s[sheet], col, row));
+    const raw = unwrap(cell(this.ws(sheet), col, row));
     if (typeof raw === 'string' && raw !== CHECK && raw.trim() === CHECK) {
       this.note(sheet, `${this.where(sheet, col, row)}: ${quoted(asTyped(raw))} — в Excel с пробелами это не отметка; загружено как ${CHECK}`);
     }
@@ -644,22 +684,31 @@ class Reader {
    * that column; another one with spaces (e.g. «Нет» of C33) is treated by Excel as it is here.
    */
   private excelLabel(sheet: SheetName, col: string, row: number, label: string): void {
-    const raw = unwrap(cell(this.s[sheet], col, row));
+    const raw = unwrap(cell(this.ws(sheet), col, row));
     if (typeof raw === 'string' && raw.toLowerCase() !== label.toLowerCase()) {
       this.note(sheet, `${this.where(sheet, col, row)}: ${quoted(asTyped(raw))} — в Excel с пробелами не распознаётся; загружено как ${quoted(label)}`);
     }
   }
 
   /**
-   * «Тип» of Запланированные and Постоянные: «Доход» is income, anything else an expense, as in Excel, whose formulas only
-   * look for «Доход» there ($D="Доход", SUMIFS "Доход" and "<>Доход").
+   * «Тип» of Запланированные and Постоянные: «Доход» is income, anything else an expense, as in Excel, whose formulas
+   * look for «Доход» there ($D="Доход", SUMIFS "Доход" and "<>Доход"). In the layout with transfers (`transfers`: the
+   * sheet has «На счёт») «Перевод» is a transfer: its formulas look for it too ($D="Перевод", SUMIFS "<>Перевод",
+   * "Перевод"); before it, the formulas did not, so there «Перевод» is an expense, as they count it — with a note, so
+   * a transfer never turns into an expense silently.
    */
-  private incomeOrExpense(sheet: SheetName, col: string | undefined, row: number): 'income' | 'expense' {
+  private rowKind(sheet: SheetName, col: string | undefined, row: number, transfers: boolean): 'income' | 'expense' | 'transfer' {
     if (col === undefined) return 'expense';
-    const v = cell(this.s[sheet], col, row);
-    if (parseKind(cellText(v)) === 'income') {
-      this.excelLabel(sheet, col, row, KIND_LABEL.income);
-      return 'income';
+    const v = cell(this.ws(sheet), col, row);
+    const kind = parseKind(cellText(v));
+    if (kind === 'income' || (kind === 'transfer' && transfers)) {
+      this.excelLabel(sheet, col, row, KIND_LABEL[kind]);
+      return kind;
+    }
+    if (kind === 'transfer') {
+      this.note(sheet, `${this.where(sheet, col, row)}: ${quoted(KIND_LABEL.transfer)} — в этой версии трекера нет «На счёт», `
+        + `его формулы считают такую строку расходом; загружено как ${quoted(KIND_LABEL.expense)}`);
+      return 'expense';
     }
     // A value that is not text (TRUE, a number, a date) is not «Доход» for Excel either, so it is an expense there
     // too; it is noted all the same, since it is not a type (text other than «Доход» is an expense without a note).
@@ -682,7 +731,7 @@ class Reader {
   private whole(sheet: SheetName, col: string, row: number, min: number, max: number, noun: string, instead: string): number | undefined {
     const n = this.parsed(sheet, col, row, cellNumber);
     if (n === undefined) return undefined;
-    const v = cell(this.s[sheet], col, row);
+    const v = cell(this.ws(sheet), col, row);
     if (Number.isInteger(n) && n >= min && n <= max) {
       this.numberFromText(sheet, col, row, v, n);
       return n;
@@ -702,7 +751,7 @@ class Reader {
    * is matched by how it is shown, with a note; a name that matches no account is noted and left out.
    */
   private accountAt(sheet: SheetName, col: string, row: number, excel: 'SUMIFS' | '=' = 'SUMIFS', at = `строка ${row}`): string | undefined {
-    const v = cell(this.s[sheet], col, row);
+    const v = cell(this.ws(sheet), col, row);
     if (isBlank(v)) return undefined;
     const name = shown(v); // text is trimmed
     const account = this.byName.get(name.toLowerCase());
@@ -713,6 +762,20 @@ class Reader {
     if (!isText(v)) this.note(sheet, `${this.where(sheet, col, row)}: ${quoted(name)} — не текст; загружено как счёт ${quoted(account.name)}`);
     else this.excelReference(sheet, col, row, account, 'со счётом', excel);
     return account.id;
+  }
+
+  /**
+   * «На счёт» of a «Запланированные» / «Постоянные» row. Excel reads it only of a transfer (SUMIFS by the type
+   * «Перевод», the ±1 helpers X / AM / AN), so on any other row it is not loaded either — with a note, as the
+   * converter lists such a cell under «Не перенесено».
+   */
+  private toAccountAt(sheet: SheetName, col: string, row: number, kind: OpKind): string | undefined {
+    if (kind === 'transfer') return this.accountAt(sheet, col, row);
+    const v = cell(this.ws(sheet), col, row);
+    if (!isBlank(v)) {
+      this.note(sheet, `${this.where(sheet, col, row)}: «На счёт» ${quoted(shown(v))} указан у строки, которая не перевод — не загружено`);
+    }
+    return undefined;
   }
 
   /**
@@ -727,7 +790,7 @@ class Reader {
       ? undefined
       : (this.expenseByName.get(typed) ?? this.expenseByName.get(typed.toLowerCase()));
     if (!category) return typed;
-    if (isText(cell(this.s[sheet], col, row))) this.excelReference(sheet, col, row, category, 'с категорией', 'SUMIFS');
+    if (isText(cell(this.ws(sheet), col, row))) this.excelReference(sheet, col, row, category, 'с категорией', 'SUMIFS');
     return category.name;
   }
 
@@ -738,7 +801,7 @@ class Reader {
    * what wildcards in the name do to it is said once, on the name.
    */
   private excelReference(sheet: SheetName, col: string, row: number, target: Named, what: string, excel: 'SUMIFS' | '='): void {
-    const raw = unwrap(cell(this.s[sheet], col, row));
+    const raw = unwrap(cell(this.ws(sheet), col, row));
     const name = target.raw;
     if (typeof raw !== 'string' || typeof name !== 'string' || raw.toLowerCase() === name.toLowerCase()) return;
     if (excel === 'SUMIFS' && criterionMatches(name, raw)) return;
@@ -758,7 +821,7 @@ class Reader {
    * that is not text (TRUE, an error, a date, a number) as it is shown, with a note, so it does not vanish.
    */
   private freeText(sheet: SheetName, col: string, row: number): string | undefined {
-    const v = cell(this.s[sheet], col, row);
+    const v = cell(this.ws(sheet), col, row);
     if (isBlank(v)) return undefined;
     const value = shown(v); // text is trimmed
     if (!isText(v)) this.note(sheet, `${this.where(sheet, col, row)}: ${quoted(value)} — не текст; загружено как текст`);
@@ -767,7 +830,7 @@ class Reader {
 
   /** The date of a row, or a note that the row is skipped. */
   private rowDate(sheet: SheetName, row: number): string | undefined {
-    const v = cell(this.s[sheet], 'C', row);
+    const v = cell(this.ws(sheet), 'C', row);
     const date = trackerDate(v);
     if (!date) this.skip(sheet, row, isBlank(v) ? 'нет даты' : `дата ${quoted(shown(v))} не распознана`);
     return date;
@@ -781,7 +844,7 @@ class Reader {
    * of spaces: Excel counts that row, so its note does not say otherwise.
    */
   private title(sheet: SheetName, col: string, row: number, header: string, excel?: string): string {
-    const v = cell(this.s[sheet], col, row);
+    const v = cell(this.ws(sheet), col, row);
     if (isBlank(v)) {
       const skipped = excel !== undefined && isEmpty(v);
       const done = skipped ? `${excel}; загружено без названия и учитывается` : 'загружено без названия';
@@ -804,7 +867,7 @@ class Reader {
    * table above the first one, not over it: the first one is the end.)
    */
   private bounds(sheet: TableSheet, top: number, last: number | undefined, totals?: Totals): Table {
-    const ws = this.s[sheet];
+    const ws = this.ws(sheet);
     const sums: { row: number; reach: number }[] = [];
     ws.eachRow((_, row) => { // only the rows that hold a value, in order
       const reach = row < top ? undefined : totals?.reach(row);
@@ -840,7 +903,7 @@ class Reader {
    * it holds (not the generator's own labels); with nothing typed there, there is nothing to tell.
    */
   private skipBareTotals(sheet: TableSheet, row: number, totals: Totals, table?: Table): boolean {
-    const ws = this.s[sheet];
+    const ws = this.ws(sheet);
     const bare = hasTotalsLabel(ws, sheet, row) && isBlank(cell(ws, totals.name, row))
       && !totals.formulas.some((col) => isFormula(cell(ws, col, row))) && !(table?.summedBelow(row) ?? false);
     if (!bare) return false;
@@ -856,7 +919,7 @@ class Reader {
    * Операции needs a date anyway, and without a name it is loaded as Excel counts it.
    */
   private skipFormulasOnly(sheet: TableSheet, row: number, cols: string[], nameCol: string): boolean {
-    const ws = this.s[sheet];
+    const ws = this.ws(sheet);
     const only = isBlank(cell(ws, nameCol, row)) && cols.every((col) => {
       const v = cell(ws, col, row);
       return v === null || v === undefined || v === '' || isFormula(v);
@@ -870,7 +933,7 @@ class Reader {
    * formula of one of `typed` (Запланированные M). A row is a row when it has any.
    */
   private withInput(sheet: TableSheet, row: number, cols: string[], typed: string[] = []): string[] {
-    const ws = this.s[sheet];
+    const ws = this.ws(sheet);
     return [...cols.filter((col) => !isBlank(cell(ws, col, row))), ...typed.filter((col) => typedOver(cell(ws, col, row)))];
   }
 
@@ -884,7 +947,7 @@ class Reader {
    */
   private afterTable(sheet: TableSheet, footer: number | undefined, input: (row: number) => string[], totals?: Totals): void {
     if (footer === undefined) return;
-    const ws = this.s[sheet];
+    const ws = this.ws(sheet);
     ws.eachRow((_, row) => { // only the rows that hold a value, in order
       if (row < footer) return;
       if (totals?.is(row)) {
@@ -966,8 +1029,9 @@ class Reader {
    * styled, so a note on a cell the import reads is caught).
    */
   cellNotes(): void {
-    for (const name of SHEETS) {
-      this.s[name].eachRow({ includeEmpty: true }, (row) => {
+    for (const name of TABS) {
+      if (this.s[name] === undefined) continue;
+      this.ws(name).eachRow({ includeEmpty: true }, (row) => {
         row.eachCell({ includeEmpty: true }, (c) => {
           if (!c.note) return;
           const text = noteText(c.note);
@@ -986,15 +1050,19 @@ class Reader {
     return { accountingStart, forecastStart, cushion, balancesDate: typedDate ?? monthStart(accountingStart) };
   }
 
-  /** Expense categories with their limits on «Месяц» (row 12+i belongs to Настройки J6+i), income categories. */
-  categories(): Data['categories'] {
+  /**
+   * Expense categories with their limits, income categories. With «Лимиты»: the usual limit in C and the own limit of
+   * accounting month k (`months`) in D…O of row 6+i; without it, the usual limit on «Месяц» C12+i (row i belongs to
+   * Настройки J6+i on both).
+   */
+  categories(months: YM[]): Data['categories'] {
     const expense: ExpenseCategory[] = [];
     for (let i = 0; i < 30; i++) {
       const name = this.freeText('Настройки', 'J', 6 + i);
       if (!name) continue;
       // Месяц and Статистика match rows by this name: SUMIFS(…, J_CAT, $B, …), where B repeats it.
       this.wildcardName('J', 6 + i, 'категории', 'её');
-      expense.push(compact({ name, limit: this.num('Месяц', 'C', 12 + i) }));
+      expense.push(this.s[LIMITS] === undefined ? compact({ name, limit: this.num('Месяц', 'C', 12 + i) }) : this.limits(name, 6 + i, months));
       const named = { name, raw: unwrap(cell(this.s['Настройки'], 'J', 6 + i)) };
       this.expenseByName.set(name, named);
       this.expenseByName.set(name.toLowerCase(), this.expenseByName.get(name.toLowerCase()) ?? named);
@@ -1005,6 +1073,19 @@ class Reader {
       if (name) income.push({ name });
     }
     return { expense, income };
+  }
+
+  /** Category `name` with its limits on row `row` of «Лимиты»: C the usual one, D…O the accounting months. */
+  private limits(name: string, row: number, months: YM[]): ExpenseCategory {
+    // read in the order of the columns, so the notes of a row come in that order too
+    const limit = this.num(LIMITS, 'C', row);
+    const monthLimits: Record<YM, number> = {};
+    months.forEach((ym, k) => {
+      const col = LIMIT_MONTH_COLS[k];
+      const value = col === undefined ? undefined : this.num(LIMITS, col, row);
+      if (value !== undefined) monthLimits[ym] = value;
+    });
+    return compact({ name, limit, monthLimits: Object.keys(monthLimits).length > 0 ? monthLimits : undefined });
   }
 
   /** Accounts: names on Настройки N6:N17, type and start on the same row of «Счета» (10…21). */
@@ -1133,7 +1214,9 @@ class Reader {
   journal(months: YM[]): JournalRow[] {
     const ws = this.s[PLANNED];
     const rows: JournalRow[] = [];
-    const input = (row: number): string[] => this.withInput(PLANNED, row, JOURNAL_INPUTS, ['M']);
+    const transfers = headerIs(cell(ws, JOURNAL_TO, 9), TO_ACCOUNT_HEADER, true);
+    const read = transfers ? [...JOURNAL_INPUTS, JOURNAL_TO] : JOURNAL_INPUTS;
+    const input = (row: number): string[] => this.withInput(PLANNED, row, read, ['M']);
     const formulas = helperFormulas(ws, ROW_FORMULA[PLANNED], 10);
     const { end, footer } = this.bounds(PLANNED, 10, formulas.last);
     for (let row = 10; row <= end; row++) {
@@ -1141,7 +1224,7 @@ class Reader {
       const date = this.rowDate(PLANNED, row);
       if (!date) continue;
       this.withoutFormulas(PLANNED, row, formulas);
-      const kind = this.incomeOrExpense(PLANNED, 'D', row);
+      const kind = this.rowKind(PLANNED, 'D', row, transfers);
       rows.push(compact({
         id: newId(),
         date,
@@ -1154,6 +1237,8 @@ class Reader {
         account: this.accountAt(PLANNED, 'J', row),
         priority: this.freeText(PLANNED, 'K', row),
         month: this.journalMonth(row, date, months),
+        // read in the order of the columns: O after K and M
+        toAccount: transfers ? this.toAccountAt(PLANNED, JOURNAL_TO, row, kind) : undefined,
       }));
     }
     this.afterTable(PLANNED, footer, input);
@@ -1202,8 +1287,8 @@ class Reader {
 
   recurring(months: YM[]): Recurring[] {
     const sheet = 'Постоянные';
-    const ws = this.s[sheet];
-    const { cols, monthCols } = recurringColumns(ws);
+    const ws = this.ws(sheet);
+    const { cols, monthCols, toCol } = recurringColumns(ws);
     const parsed = <T>(name: RecurringColumn, row: number, parse: (v: CellValue) => T | undefined): T | undefined => {
       const col = cols[name];
       return col === undefined ? undefined : this.read(sheet, col, row, parse);
@@ -1213,7 +1298,10 @@ class Reader {
       return col === undefined ? undefined : this.whole(sheet, col, row, min, max, noun, instead);
     };
     // Every column the import reads except «Что»: a row with input in one of them is a row, named or not.
-    const inputs = [...Object.entries(cols).filter(([name]) => name !== 'what').map(([, col]) => col), ...monthCols];
+    const inputs = [
+      ...Object.entries(cols).filter(([name]) => name !== 'what').map(([, col]) => col), ...monthCols,
+      ...(toCol === undefined ? [] : [toCol]),
+    ];
     const rows: Recurring[] = [];
     const read = [cols.what, ...inputs];
     const input = (row: number): string[] => this.withInput(sheet, row, read);
@@ -1232,7 +1320,7 @@ class Reader {
       // Without its formulas the row note has said what Excel does; the note on the name does not repeat it.
       const noted = this.withoutFormulas(sheet, row, formulas);
       const what = this.title(sheet, cols.what, row, 'Что', noted ? undefined : EXCEL_SKIPS_RECURRING);
-      const kind = this.incomeOrExpense(sheet, cols.kind, row);
+      const kind = this.rowKind(sheet, cols.kind, row, toCol !== undefined);
       // Read in the order of the columns, so the notes of a row come in that order too.
       const category = cols.category === undefined ? undefined : this.category(sheet, cols.category, row, kind === 'expense');
       const day = whole('day', row, 1, 31, 'день месяца', 'не загружено');
@@ -1247,6 +1335,7 @@ class Reader {
         const value = col === undefined ? undefined : this.readTick(sheet, col, row, mark);
         if (value !== undefined) marks[ym] = value;
       });
+      const toAccount = toCol !== undefined ? this.toAccountAt(sheet, toCol, row, kind) : undefined;
       rows.push(compact({
         id: newId(),
         what,
@@ -1258,6 +1347,7 @@ class Reader {
         from,
         to,
         account,
+        toAccount,
         marks,
       }));
     }
@@ -1324,12 +1414,22 @@ class Reader {
   }
 }
 
+/** Whether a header cell says `title`: whitespace collapsed, ignoring case; `start`: the text begins with it. */
+function headerIs(v: CellValue, title: string, start = false): boolean {
+  const text = cellText(v)?.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (text === undefined) return false;
+  return start ? text === title || text.startsWith(`${title} `) : text === title;
+}
+
 /**
  * Column letters of «Постоянные» by the header texts in row 7. The 12 month columns start at the
  * first header cell (from C on) that is a formula; only headers left of them are looked at,
- * because the helper tables to the right repeat some of the names.
+ * because the helper tables to the right repeat some of the names. «На счёт» (`toCol`, the layout with transfers) is
+ * the column right after the 12 months, when its header says so; before that layout there is none.
  */
-function recurringColumns(ws: Worksheet): { cols: Partial<Record<RecurringColumn, string>> & { what: string }; monthCols: string[] } {
+function recurringColumns(ws: Worksheet): {
+  cols: Partial<Record<RecurringColumn, string>> & { what: string }; monthCols: string[]; toCol?: string;
+} {
   const header = ws.getRow(7);
   let firstMonth: number | undefined;
   for (let col = 3; col <= header.cellCount; col++) {
@@ -1349,7 +1449,12 @@ function recurringColumns(ws: Worksheet): { cols: Partial<Record<RecurringColumn
     throw new TrackerImportError('Лист «Постоянные» не похож на трекер: в строке 7 нет заголовка «Что» или столбцов месяцев.');
   }
   const start = firstMonth;
-  return { cols: { ...cols, what: cols.what }, monthCols: Array.from({ length: 12 }, (_, k) => ws.getColumn(start + k).letter) };
+  const after = ws.getColumn(start + 12).letter;
+  return {
+    cols: { ...cols, what: cols.what },
+    monthCols: Array.from({ length: 12 }, (_, k) => ws.getColumn(start + k).letter),
+    ...(headerIs(header.getCell(start + 12).value, TO_ACCOUNT_HEADER) ? { toCol: after } : {}),
+  };
 }
 
 /**
@@ -1361,11 +1466,14 @@ function readOverrides(
 ): string[] {
   const overrides: string[] = [];
   const typed = (sheet: SheetName, col: string, row: number): void => {
-    const v = cell(s[sheet], col, row);
-    if (!isFormula(v) && !isBlank(v)) overrides.push(`${s[sheet].name}!${col}${row} = ${shown(v)}`);
+    const ws = s[sheet];
+    if (ws === undefined) return;
+    const v = cell(ws, col, row);
+    if (!isFormula(v) && !isBlank(v)) overrides.push(`${ws.name}!${col}${row} = ${shown(v)}`);
   };
-  for (const name of SHEETS) {
-    for (const { sheet, cols, from, to } of FORMULA_AREAS.filter((area) => area.sheet === name)) {
+  const areas = s[LIMITS] === undefined ? FORMULA_AREAS : [...FORMULA_AREAS, MONTH_LIMIT_FORMULAS];
+  for (const name of TABS) {
+    for (const { sheet, cols, from, to } of areas.filter((area) => area.sheet === name)) {
       const last = to === 'table' ? tableEnds[sheet as TableSheet] ?? from - 1 : to;
       for (let row = from; row <= last; row++) for (const col of cols) typed(sheet, col, row);
     }
@@ -1378,9 +1486,9 @@ export async function importTracker(buf: ArrayBuffer): Promise<ImportResult> {
   const s = trackerSheets(await openWorkbook(buf));
   const reader = new Reader(s);
   const settings = reader.settings();
-  const categories = reader.categories();
-  const accounts = reader.readAccounts();
   const months = accountingMonths(settings);
+  const categories = reader.categories(months);
+  const accounts = reader.readAccounts();
   const data: Data = {
     schemaVersion: SCHEMA_VERSION,
     settings,

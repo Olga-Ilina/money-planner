@@ -7,6 +7,8 @@ describe('warnings — scenario', () => {
     expect(warnings(scenario())).toEqual({
       unassigned: { count: 0, sum: 0 },
       transfersWithoutTarget: 0,
+      transfersToSameAccount: 0,
+      incomeToSavings: 0,
       outOfYear: 1,
       duplicates: 2, // journal «Аренда» (recurring) and operation «Кафе» 06.10 (journal)
       unknownAccounts: 0,

@@ -1,7 +1,7 @@
 // Small pieces shared by the forms: the plan forms of «Ещё» (RecurringForm, PurchaseForm, DebtForm), and
 // for OperationForm and JournalForm the note about a date outside the accounting year and «Показать».
-import { accountingMonths, addMonths, inAccountingYear } from '../../engine';
-import type { Data, Settings, YM } from '../../engine';
+import { ROW_CHECK_LABEL, accountingMonths, addMonths, inAccountingYear, rowCheck } from '../../engine';
+import type { Data, OpKind, Settings, YM } from '../../engine';
 import type { CommitOptions } from '../actions';
 import type { Option } from '../kit';
 import { openTab } from '../nav';
@@ -40,6 +40,27 @@ export function outsideYearNote(s: Settings, ym: YM | undefined, inBalances: boo
     ? 'запись учтётся в остатках, но не попадёт в ленту и отчёты'
     : 'запись не попадёт ни в остатки (раньше даты остатков), ни в ленту и отчёты';
   return `Дата вне учётного года (${range}): ${where}. Учётный год меняется в «Ещё → Учёт и прогноз».`;
+}
+
+/**
+ * A transfer (spec 2026-10-01-planned-transfers) needs «Со счёта» and a different «На счёт», as an operation does;
+ * nothing for another kind.
+ */
+export function transferErrors(d: { kind: OpKind; account?: string; toAccount?: string }): { account?: string; toAccount?: string } {
+  if (d.kind !== 'transfer') return {};
+  const errors: { account?: string; toAccount?: string } = {};
+  if (d.account === undefined) errors.account = 'Выберите счёт';
+  if (d.toAccount === undefined) errors.toAccount = 'Выберите счёт';
+  else if (d.toAccount === d.account) errors.toAccount = 'Счета должны различаться';
+  return errors;
+}
+
+/**
+ * Under «Счёт» of an income to a savings account: the tracker's «Похоже на перевод — если деньги пришли с вашей карты,
+ * выберите тип «Перевод»» (the money from one's own card is not income). Undefined otherwise.
+ */
+export function transferHint(d: Data, kind: OpKind, account: string | undefined): string | undefined {
+  return rowCheck(d, { kind, account }) === 'looksLikeTransfer' ? ROW_CHECK_LABEL.looksLikeTransfer : undefined;
 }
 
 /** The object without its undefined fields: a cleared optional field is stored as absent. */

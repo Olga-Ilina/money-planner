@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { IDBFactory } from 'fake-indexeddb';
+import { forecast } from '../../../src/engine';
 import type { Data } from '../../../src/engine';
 import * as db from '../../../src/store/db';
 import { actions } from '../../../src/ui/actions';
@@ -525,6 +526,66 @@ describe('Отчёты — год', () => {
 });
 
 describe('Отчёты — прогноз', () => {
+  it('«Кредиты»: what the card repayment debits that month, for reference (not in the expenses)', () => {
+    withData();
+    renderReports();
+    show('Прогноз');
+    const credits = (month: string) => within(section(month)).getByText('Кредиты').closest('.row') as HTMLElement;
+    expect(credits('Октябрь 2026').textContent).toContain(money(0));
+    expect(credits('Декабрь 2026').textContent).toContain(money(10));
+    expect(credits('Декабрь 2026').textContent).toContain('Погашение кредитки 10-го · справочно, не в расходах');
+    expect(within(section('Декабрь 2026')).getByText('Расходы').closest('.row')?.textContent).toContain(money(1390));
+  });
+
+  it('«Резерв по лимитам»: a row of each month card, in «Расходы»; a «Резерв» column of the weeks (today 15.10)', () => {
+    const d = withData((x) => {
+      x.categories.expense[1] = { name: 'Продукты', limit: 400, monthLimits: { '2026-12': 600 } };
+    });
+    const f = forecast(d, '2026-10-15');
+    renderReports();
+    show('Прогноз');
+    for (const m of f.months) {
+      const card = section(m.label);
+      const reserve = within(card).getByText('Резерв по лимитам').closest('.row') as HTMLElement;
+      expect(reserve.textContent).toContain(money(m.reserve));
+      expect(reserve.textContent).toContain('Повседневные траты: остаток лимитов · входит в расходы');
+      const expenses = within(card).getByText('Расходы').closest('.row') as HTMLElement;
+      expect(expenses.textContent).toContain(money(m.expenses));
+      expect(plain(expenses.textContent ?? '')).toContain(plain(`резерв ${money(m.reserve)}`));
+    }
+    expect(f.months[0]!.reserve).toBeGreaterThan(0);
+    expect([...tableIn('По неделям').querySelectorAll('thead th')].map((th) => th.textContent))
+      .toEqual(['Неделя', 'Остаток', 'Доходы', 'Расходы', 'Резерв']);
+    const rows = bodyRows('По неделям');
+    rows.forEach((r, i) => expect(r.querySelectorAll('td')[3]?.textContent).toBe(money(f.weeks[i]!.reserve)));
+    expect(rows[0]?.querySelectorAll('td')[3]?.textContent).toBe(money(0)); // 1…4 October: before today
+  });
+
+  it('without limits: no reserve row, no reserve column', () => {
+    withData();
+    renderReports();
+    show('Прогноз');
+    expect(screen.queryByText('Резерв по лимитам')).toBeNull();
+  });
+
+  it('«Кредиты» without auto-payment: 0 and «Автопогашение выключено»; no credit card: no row', () => {
+    withData((d) => {
+      d.credit.auto = false;
+    });
+    renderReports();
+    show('Прогноз');
+    const dec = within(section('Декабрь 2026')).getByText('Кредиты').closest('.row') as HTMLElement;
+    expect(dec.textContent).toContain(money(0));
+    expect(dec.textContent).toContain('Автопогашение выключено');
+    cleanup();
+    withData((d) => {
+      d.accounts = d.accounts.filter((a) => a.type !== 'credit');
+    });
+    renderReports();
+    show('Прогноз');
+    expect(screen.queryByText('Кредиты')).toBeNull();
+  });
+
   it('three month cards: income, expenses, end balance, reserve over the cushion', () => {
     withData();
     renderReports();
@@ -604,7 +665,7 @@ describe('Отчёты — прогноз', () => {
     const oct = section('Октябрь 2026');
     // the row sits between the expenses and the end balance, which includes it
     expect([...oct.querySelectorAll('.row-title')].map((t) => t.textContent)).toEqual([
-      'Доходы', 'Расходы', 'Переводы в сбережения / из сбережений', 'Остаток на конец', 'Запас над подушкой',
+      'Доходы', 'Расходы', 'Переводы в сбережения / из сбережений', 'Остаток на конец', 'Запас над подушкой', 'Кредиты',
     ]);
     expect(within(oct).getByText('Остаток на конец').closest('.row')?.textContent).toContain(money(2570));
     expect(row('На начало прогноза').textContent).toContain(money(1000));

@@ -29,12 +29,16 @@ export function autoPayAccounts(d: Data): { card?: string; payer?: string } {
   return exists(card) && exists(payer) ? { card, payer } : {};
 }
 
-/** What uses account `id`: rows by source (a transfer counts on either end) and the credit settings. */
+/**
+ * What uses account `id`: rows by source (a transfer counts on either end — an operation, a planned or a recurring
+ * one; a row is counted once) and the credit settings.
+ */
 export function accountUsage(d: Data, id: string): AccountUsage {
   const is = (v: string | undefined) => opt(v) === id;
-  const operations = d.operations.filter((o) => is(o.account) || is(o.toAccount)).length;
-  const journal = d.journal.filter((r) => is(r.account)).length;
-  const recurring = d.recurring.filter((r) => is(r.account)).length;
+  const either = (r: { account?: string; toAccount?: string }) => is(r.account) || is(r.toAccount);
+  const operations = d.operations.filter(either).length;
+  const journal = d.journal.filter(either).length;
+  const recurring = d.recurring.filter(either).length;
   const purchases = d.purchases.filter((p) => is(p.account)).length;
   const auto = autoPayAccounts(d);
   const credit: CreditField[] = [];

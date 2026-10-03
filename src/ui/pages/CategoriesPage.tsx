@@ -3,7 +3,12 @@
 // buttons; tapping a category then opens its sheet: rename (every row that uses the old name follows in
 // the same commit), the limit, and «Удалить категорию» — only when nothing uses it, or by moving those
 // rows to another category (or «Без категории») in the same commit. Changes of the lists can be undone.
+// «Лимиты по месяцам» (normal view): a row per expense category opens its sheet — «Обычный лимит» and a field for
+// each of the 12 accounting months; an empty month has the usual limit (spec 2026-10-03-month-limits). Limits of
+// months outside the accounting year are one line under the months, with «Очистить» (one change, one undo).
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { accountingMonths, monthLabel } from '../../engine';
+import type { ExpenseCategory, YM } from '../../engine';
 import { actions } from '../actions';
 import { formatMoney } from '../format';
 import {
@@ -12,7 +17,8 @@ import {
 import type { RoutedPageProps } from '../nav';
 import { appData } from '../state';
 import {
-  addCategory, categoryNameError, categoryUsage, moveCategory, removeCategory, renameCategory, setLimit, usageText,
+  addCategory, categoryNameError, categoryUsage, clearOutOfYearMonthLimits, moveCategory, outOfYearMonths, removeCategory,
+  renameCategory, setLimit, setMonthLimit, usageText,
 } from './categoriesEdit';
 import type { CategoryKind } from './categoriesEdit';
 
@@ -29,17 +35,32 @@ function limitOf(kind: CategoryKind, name: string | undefined): number | undefin
   return appData().categories.expense.find((c) => c.name === name)?.limit;
 }
 
+/** «Свой лимит: ноябрь, декабрь» — the accounting months with their own limit — or «Все месяцы — обычный лимит». */
+function monthsSummary(c: ExpenseCategory, months: YM[]): string {
+  const own = months.filter((ym) => c.monthLimits?.[ym] !== undefined);
+  if (own.length === 0) return 'Все месяцы — обычный лимит';
+  return `Свой лимит: ${own.map((ym) => monthLabel(ym).split(' ')[0]?.toLowerCase()).join(', ')}`;
+}
+
 export function CategoriesPage(_props: RoutedPageProps) {
   const d = appData();
   const [editMode, setEditMode] = useState(false);
   const [editing, setEditing] = useState<Editing | null>(null);
   // a fresh sheet (and form state) for every opening; the closing one keeps its state while it slides away
   const [opened, setOpened] = useState(0);
+  const [monthsOf, setMonthsOf] = useState<string | null>(null);
+  const [monthsOpened, setMonthsOpened] = useState(0);
 
   const open = (e: Editing) => {
     setEditing(e);
     setOpened((n) => n + 1);
   };
+
+  const openMonths = (name: string) => {
+    setMonthsOf(name);
+    setMonthsOpened((n) => n + 1);
+  };
+  const months = accountingMonths(d.settings);
 
   const commitLimit = (name: string, limit: number | undefined) => {
     if (limitOf('expense', name) === limit) return;
@@ -123,12 +144,33 @@ export function CategoriesPage(_props: RoutedPageProps) {
       }
     >
       {(['expense', 'income'] as const).map((kind) => (
-        <Section key={kind} header={SECTION_TITLE[kind]} footer={footer(kind)}>
-          {list(kind)}
-          <Row icon="plus" title="Добавить категорию" onClick={() => open({ kind })} />
-        </Section>
+        <>
+          <Section key={kind} header={SECTION_TITLE[kind]} footer={footer(kind)}>
+            {list(kind)}
+            <Row icon="plus" title="Добавить категорию" onClick={() => open({ kind })} />
+          </Section>
+          {kind === 'expense' && !editMode && d.categories.expense.length > 0 && (
+            <Section
+              key="months"
+              header="Лимиты по месяцам"
+              footer="Свой лимит на любой месяц учёта. Пустой месяц — обычный лимит."
+            >
+              {d.categories.expense.map((c, i) => (
+                <Row
+                  key={`${i}:${c.name}`}
+                  focusKey={`months-${i}`}
+                  title={c.name}
+                  subtitle={monthsSummary(c, months)}
+                  chevron
+                  onClick={() => openMonths(c.name)}
+                />
+              ))}
+            </Section>
+          )}
+        </>
       ))}
       <CategorySheet key={opened} editing={editing} onClose={() => setEditing(null)} />
+      <MonthLimitsSheet key={`m${monthsOpened}`} name={monthsOf} onClose={() => setMonthsOf(null)} />
     </Page>
   );
 }
@@ -258,7 +300,7 @@ function CategorySheet({ editing, onClose }: CategorySheetProps) {
               <TextField label="Название" value={name} onChange={setName} error={nameError} maxLength={60} />
               {kind === 'expense' && (
                 <AmountField
-                  label="Лимит в месяц"
+                  label="Обычный лимит"
                   value={limit}
                   placeholder="Без лимита"
                   onChange={v.field('limit', setLimitValue)}
@@ -283,5 +325,86 @@ function CategorySheet({ editing, onClose }: CategorySheetProps) {
         onCancel={() => setConfirm(false)}
       />
     </>
+  );
+}
+
+/**
+ * The limits of expense category `name`: «Обычный лимит» and the 12 accounting months (empty: the usual limit). One
+ * commit on «Сохранить»; months outside the accounting year keep their values unless «Очистить» (its own commit) removes
+ * them — it touches nothing else, so what is typed in the sheet stays.
+ */
+function MonthLimitsSheet({ name, onClose }: { name: string | null; onClose: () => void }) {
+  // what this sheet was opened for; kept while it slides away after `name` is cleared
+  const [subject] = useState(name);
+  const d = appData();
+  const months = accountingMonths(d.settings);
+  const category = d.categories.expense.find((c) => c.name === subject);
+  const [limit, setLimitValue] = useState<number | undefined>(category?.limit);
+  const [own, setOwn] = useState<Partial<Record<YM, number>>>(() => ({ ...category?.monthLimits }));
+  const v = useFieldValidity();
+  const usual = limit === undefined ? 'Обычный (без лимита)' : `Обычный (${formatMoney(limit)})`;
+  const outside = category === undefined ? 0 : outOfYearMonths(category, d.settings).length;
+
+  const clearOutside = () => {
+    if (subject === null) return;
+    const latest = appData();
+    const next = clearOutOfYearMonthLimits(latest, subject);
+    if (next !== latest) actions.commit(next, 'Лимиты вне учётного года очищены');
+  };
+
+  const save = () => {
+    if (v.anyInvalid || subject === null) return;
+    const latest = appData();
+    const saved = latest.categories.expense.find((c) => c.name === subject);
+    if (saved === undefined) return onClose();
+    let next = saved.limit === limit ? latest : setLimit(latest, subject, limit);
+    for (const ym of months) {
+      if (saved.monthLimits?.[ym] !== own[ym]) next = setMonthLimit(next, subject, ym, own[ym]);
+    }
+    if (next !== latest) actions.commit(next, 'Сохранено');
+    onClose();
+  };
+
+  return (
+    <Sheet
+      open={name !== null}
+      title={subject ?? ''}
+      onClose={onClose}
+      left={
+        <Button kind="plain" onClick={onClose}>
+          Отмена
+        </Button>
+      }
+      right={
+        <Button kind="plain" onClick={save} disabled={v.anyInvalid}>
+          Сохранить
+        </Button>
+      }
+    >
+      <Section>
+        <AmountField label="Обычный лимит" value={limit} placeholder="Без лимита" onChange={v.field('limit', setLimitValue)} />
+      </Section>
+      <Section header="По месяцам" footer="Пустой месяц — обычный лимит.">
+        {months.map((ym) => (
+          <AmountField
+            key={ym}
+            label={monthLabel(ym)}
+            value={own[ym]}
+            placeholder={usual}
+            onChange={v.field(`m${ym}`, (n: number | undefined) => setOwn((o) => ({ ...o, [ym]: n })))}
+          />
+        ))}
+        {outside > 0 && (
+          <Row
+            title={`Ещё лимиты вне учётного года: ${outside}`}
+            trailing={
+              <Button kind="plain" onClick={clearOutside}>
+                Очистить
+              </Button>
+            }
+          />
+        )}
+      </Section>
+    </Sheet>
   );
 }

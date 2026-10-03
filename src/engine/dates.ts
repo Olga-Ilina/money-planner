@@ -91,6 +91,11 @@ export function addDays(d: ISODate, n: number): ISODate {
   return fromDayNumber(toDayNumber(d) + n);
 }
 
+/** The days from..to, both included; 0 when `to` is before `from`. */
+export function daysFromTo(from: ISODate, to: ISODate): number {
+  return Math.max(0, toDayNumber(to) - toDayNumber(from) + 1);
+}
+
 export function mondayOnOrBefore(d: ISODate): ISODate {
   const n = toDayNumber(d);
   const sinceMonday = (((n + 3) % 7) + 7) % 7; // 1970-01-01 was a Thursday

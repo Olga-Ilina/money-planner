@@ -1,11 +1,13 @@
 // «Лента» (spec §5): every record of one accounting month — operations, journal rows, recurring
 // payments and purchases — grouped by date, with a filter, the month's fact / plan, «+» for a new
 // record and the month report. A row opens its card (sheets/ItemSheet.tsx). The checks of «Сегодня»
-// open it filtered to the rows they found («без счёта», «дубль?» — both also marked on every row).
+// open it filtered to the rows they found («без счёта», «дубль?», the checks of transfers — all also marked on
+// every row). Under «Все» the automatic credit card repayment shows on its debit day: for reference only (in no sum,
+// no card, nothing to tap), as the tracker's block on «Запланированные».
 import { signal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
-import { accountingMonths, monthItems, monthSummary, ymOf } from '../../engine';
-import type { Data, FeedItem, ISODate, OpKind } from '../../engine';
+import { CARD_REPAYMENT_LABEL, accountingMonths, cardRepayments, monthItems, monthSummary, ymOf } from '../../engine';
+import type { CardRepayment, Data, FeedItem, ISODate, OpKind, RowCheck } from '../../engine';
 import { formatDay, formatMoney } from '../format';
 import { ioErrorMessage, loadReports } from '../io';
 import { Banner, EmptyState, Icon, MonthPicker, Money, Page, Row, Section, Segmented, StatCard, StatGrid, showToast } from '../kit';
@@ -29,8 +31,11 @@ const FILTERS: { value: FeedFilter; label: string }[] = [
 /** The chosen filter; survives tab switches (the month is the shared feedMonth). */
 export const feedFilter = signal<FeedFilter>('all');
 
-/** A check of «Сегодня» shown in «Лента»: only the rows paid without an account, or only possible duplicates. */
-export type FeedCheck = 'unassigned' | 'duplicates';
+/**
+ * A check of «Сегодня» (and «Счета») shown in «Лента»: only the rows paid without an account, only possible
+ * duplicates, or only the rows with a check of a transfer (no «На счёт», the same account, an income to savings).
+ */
+export type FeedCheck = 'unassigned' | 'duplicates' | 'transfers';
 
 /** The check «Лента» is filtered to (null: none); set by openFeedCheck, cleared by «Показать все». */
 export const feedCheck = signal<FeedCheck | null>(null);
@@ -52,20 +57,25 @@ export function isUnassigned(item: FeedItem): boolean {
 const CHECK_TEST: Record<FeedCheck, (item: FeedItem) => boolean> = {
   unassigned: isUnassigned,
   duplicates: (item) => item.duplicate !== undefined,
+  transfers: (item) => item.check !== undefined,
 };
 
 /**
  * How many rows «Лента» shows for each check over the 12 accounting months — the filter's own test, so
- * «Сегодня» never counts a row «Лента» cannot show (outside the year, a bought purchase without a date).
+ * «Сегодня» never counts a row «Лента» cannot show (outside the year, a bought purchase without a date). A check of
+ * a transfer belongs to the record, not to a month: a recurring row «Лента» shows in many months counts once.
  */
 export function feedCheckCounts(d: Data): Record<FeedCheck, number> {
-  const counts: Record<FeedCheck, number> = { unassigned: 0, duplicates: 0 };
+  const counts: Record<FeedCheck, number> = { unassigned: 0, duplicates: 0, transfers: 0 };
+  const checked = new Set<string>();
   for (const ym of accountingMonths(d.settings)) {
     for (const item of monthItems(d, ym)) {
       if (CHECK_TEST.unassigned(item)) counts.unassigned += 1;
       if (CHECK_TEST.duplicates(item)) counts.duplicates += 1;
+      if (CHECK_TEST.transfers(item)) checked.add(`${item.source}:${item.id}`);
     }
   }
+  counts.transfers = checked.size;
   return counts;
 }
 
@@ -77,6 +87,8 @@ function anyMonthHas(d: Data, check: FeedCheck): boolean {
 const CHECK_NOTE: Record<FeedCheck, string> = {
   unassigned: 'Только записи без счёта: они оплачены, но их нет ни в одном остатке. Укажите счёт в карточке записи.',
   duplicates: 'Только возможные дубли. Откройте запись, чтобы сравнить её с похожей и удалить лишнюю.',
+  transfers:
+    'Только переводы без «На счёт» или на тот же счёт и доходы на сберегательный счёт. Откройте запись, чтобы выбрать счёт или тип «Перевод».',
 };
 
 /** Opens «Лента» at month `ym` (when given) with every record: no check filter left on from before. */
@@ -123,6 +135,8 @@ export interface DateGroup {
   /** undefined: the items without a date (always the last group). */
   date?: ISODate;
   items: FeedItem[];
+  /** The automatic card repayments of that day (addRepayments). */
+  repayments?: CardRepayment[];
 }
 
 /** Items (in date order, undated last — as monthItems returns them) grouped by date. */
@@ -134,6 +148,26 @@ export function groupByDate(items: FeedItem[]): DateGroup[] {
     else groups.push(item.date === undefined ? { items: [item] } : { date: item.date, items: [item] });
   }
   return groups;
+}
+
+/**
+ * The groups with the card repayments on their days: added to the group of that date, or as a group of their own in
+ * date order (the undated group stays last). A new array; the groups given are not changed.
+ */
+export function addRepayments(groups: DateGroup[], repayments: CardRepayment[]): DateGroup[] {
+  const out = groups.map((g) => ({ ...g }));
+  for (const r of repayments) {
+    const same = out.find((g) => g.date === r.date);
+    if (same) {
+      same.repayments = [...(same.repayments ?? []), r];
+      continue;
+    }
+    const at = out.findIndex((g) => g.date === undefined || g.date > r.date);
+    const group: DateGroup = { date: r.date, items: [], repayments: [r] };
+    if (at < 0) out.push(group);
+    else out.splice(at, 0, group);
+  }
+  return out;
 }
 
 /** What the amount of a row is: «план» / «факт» for a record still to pay, plus «перенесено» when postponed. */
@@ -150,7 +184,7 @@ export interface FeedRowView {
   caption?: FeedCaption;
   /** A planned record that is paid (operations are facts by nature and get no check). */
   check: boolean;
-  /** What the check says: «Оплачено», «Получено» (income) or «Куплено» (a purchase). */
+  /** What the check says: «Оплачено», «Получено» (income), «Переведено» (a transfer) or «Куплено» (a purchase). */
   checkLabel: string;
   cancelled: boolean;
   /** The amount does not count: a cancelled row with nothing paid. */
@@ -158,7 +192,16 @@ export interface FeedRowView {
   duplicate: boolean;
   /** Counts without an account (missing from every balance): marked «без счёта». */
   unassigned: boolean;
+  /** The check of a transfer or of an income to savings (FeedItem.check): marked with CHECK_BADGE. */
+  rowCheck?: RowCheck;
 }
+
+/** The short marks of the checks on a feed row (the full words: ROW_CHECK_LABEL, on the record's card). */
+export const CHECK_BADGE: Record<RowCheck, string> = {
+  looksLikeTransfer: 'похоже на перевод',
+  noTarget: 'нет «На счёт»',
+  sameAccount: 'тот же счёт',
+};
 
 const OPERATION_ICON: Record<OpKind, IconName> = { expense: 'cart', income: 'plus-circle', transfer: 'arrows' };
 /** The icon square takes the colour of the kind (a cancelled row: grey). */
@@ -202,7 +245,7 @@ export function feedRow(item: FeedItem, d: Data): FeedRowView {
   const paid = item.status === 'paid';
   // a fact counts whatever the status says (a cancelled fine that was partly paid, a fact typed in)
   const amount = paid || item.fact !== 0 ? item.fact : cancelled ? cancelledPlan(d, item) : item.plan;
-  return {
+  const view: FeedRowView = {
     title: itemTitle(item),
     subtitle: subtitle || undefined,
     icon: item.source === 'operation' ? OPERATION_ICON[item.kind] : SOURCE_ICON[item.source],
@@ -210,12 +253,15 @@ export function feedRow(item: FeedItem, d: Data): FeedRowView {
     amount,
     caption: caption(item),
     check: paid && item.source !== 'operation',
-    checkLabel: item.source === 'purchase' ? 'Куплено' : item.kind === 'income' ? 'Получено' : 'Оплачено',
+    checkLabel:
+      item.source === 'purchase' ? 'Куплено' : item.kind === 'income' ? 'Получено' : item.kind === 'transfer' ? 'Переведено' : 'Оплачено',
     cancelled,
     amountStruck: cancelled && item.fact === 0,
     duplicate: item.duplicate !== undefined,
     unassigned: isUnassigned(item),
   };
+  if (item.check !== undefined) view.rowCheck = item.check;
+  return view;
 }
 
 const EMPTY_FILTER: Record<FeedFilter, string> = {
@@ -269,11 +315,39 @@ function FeedRow({ item, d }: { item: FeedItem; d: Data }) {
               <span class="feed-badge">без счёта</span>
             </>
           )}
+          {view.rowCheck && (
+            <>
+              {' '}
+              <span class="feed-badge">{CHECK_BADGE[view.rowCheck]}</span>
+            </>
+          )}
         </>
       }
       subtitle={view.subtitle}
       value={<FeedValue view={view} />}
       onClick={() => openSheet('item', { item: { source: item.source, id: item.id, ym: item.ym } })}
+    />
+  );
+}
+
+/** The automatic card repayment of a day: «Погашение кредитки: <card> ← <from>», for reference, not a button. */
+function RepaymentRow({ r, d }: { r: CardRepayment; d: Data }) {
+  const from = accountName(d, r.from);
+  return (
+    <Row
+      icon="card"
+      iconTone="muted"
+      title={`${CARD_REPAYMENT_LABEL}: ${accountName(d, r.card)}${from ? ` ← ${from}` : ''}`}
+      subtitle="Справочно, уже учтено"
+      value={
+        <span class="feed-value">
+          <span class="feed-amount tone-muted">
+            <Money value={r.amount} tone="plain" />
+          </span>
+          <span class="sr-only">, </span>
+          <span class="feed-caption">{r.debited ? 'списано' : 'ожидается'}</span>
+        </span>
+      }
     />
   );
 }
@@ -291,7 +365,10 @@ export function Feed() {
   }, [stale]);
   const all = monthItems(d, ym);
   const shown = filterItems(all, filter);
-  const groups = groupByDate(check ? shown.filter(CHECK_TEST[check]) : shown);
+  // the card repayments of the month (only a debit, not a 0): under «Все» only, never under a check
+  const repayments =
+    filter === 'all' && !check ? cardRepayments(d, today()).filter((r) => r.amount !== 0 && ymOf(r.date) === ym) : [];
+  const groups = addRepayments(groupByDate(check ? shown.filter(CHECK_TEST[check]) : shown), repayments);
   const summary = monthSummary(d, ym);
   const [exporting, setExporting] = useState(false);
 
@@ -358,6 +435,9 @@ export function Feed() {
           <Section key={g.date ?? 'none'} header={g.date === undefined ? 'Без даты' : formatDay(g.date)}>
             {g.items.map((item) => (
               <FeedRow key={`${item.source}:${item.id}`} item={item} d={d} />
+            ))}
+            {g.repayments?.map((r) => (
+              <RepaymentRow key={`repayment:${r.date}`} r={r} d={d} />
             ))}
           </Section>
         ))

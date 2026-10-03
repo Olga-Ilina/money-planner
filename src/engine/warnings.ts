@@ -11,10 +11,14 @@ import {
   purchaseFact,
   recurringFact,
 } from './rules';
+import { rowCheck } from './transfers';
+import type { RowCheck } from './transfers';
 
 export interface Warnings {
   unassigned: { count: number; sum: number }; // paid without an account: missing from every balance
-  transfersWithoutTarget: number;
+  transfersWithoutTarget: number; // transfers without «На счёт»: operations, journal rows, recurring payments
+  transfersToSameAccount: number; // transfers whose «На счёт» is «Со счёта»
+  incomeToSavings: number; // «Доход» on a savings account: «Похоже на перевод…»
   outOfYear: number; // journal rows (by accounting month) and operations (by date) outside the 12 months
   duplicates: number; // possible duplicates among journal rows and operations
   unknownAccounts: number; // rows and credit settings pointing to an account that does not exist
@@ -53,6 +57,12 @@ export function warnings(data: Data): Warnings {
     data.journal.filter((r) => duplicatesForJournal(data, r) !== null).length +
     data.operations.filter((o) => duplicatesForOperation(data, o) !== null).length;
 
+  const checks = [...data.operations, ...data.journal, ...data.recurring].map((r) => rowCheck(data, r));
+  const counted = (check: RowCheck): number => checks.filter((c) => c === check).length;
+  // the tracker's «Переводов без «на счёт»» counts every transfer without it, whatever else the row has
+  const noTarget = [...data.operations, ...data.journal, ...data.recurring]
+    .filter((r) => r.kind === 'transfer' && opt(r.toAccount) === undefined).length;
+
   const known = new Set(data.accounts.map((a) => a.id));
   const unknown = (...ids: (string | undefined)[]): boolean =>
     ids.some((id) => {
@@ -60,13 +70,15 @@ export function warnings(data: Data): Warnings {
       return given !== undefined && !known.has(given);
     });
   const unknownAccounts =
-    data.operations.filter((o) => unknown(o.account, o.toAccount)).length +
-    [...data.journal, ...data.recurring, ...data.purchases].filter((r) => unknown(r.account)).length +
+    [...data.operations, ...data.journal, ...data.recurring].filter((r) => unknown(r.account, r.toAccount)).length +
+    data.purchases.filter((r) => unknown(r.account)).length +
     [data.credit.accountId, data.credit.fromAccountId].filter((id) => unknown(id)).length;
 
   return {
     unassigned: { count, sum },
-    transfersWithoutTarget: data.operations.filter((o) => o.kind === 'transfer' && opt(o.toAccount) === undefined).length,
+    transfersWithoutTarget: noTarget,
+    transfersToSameAccount: counted('sameAccount'),
+    incomeToSavings: counted('looksLikeTransfer'),
     outOfYear,
     duplicates,
     unknownAccounts,

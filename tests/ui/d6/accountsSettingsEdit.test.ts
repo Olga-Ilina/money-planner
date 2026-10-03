@@ -6,6 +6,7 @@ import {
   updateAccount,
 } from '../../../src/ui/pages/accountsSettingsEdit';
 import { ACC, scenario } from '../../engine/scenario';
+import { TR, transfersScenario } from '../../engine/transfersScenario';
 
 const ids = (d: Data) => d.accounts.map((a) => a.id);
 
@@ -51,6 +52,22 @@ describe('accountUsage', () => {
     const next = removeAccount(chosen, 'acc-x');
     expect(next.credit).toEqual({ auto: false, closeDay: 4, payDay: 10 });
     expect('fromAccountId' in next.credit).toBe(false);
+  });
+
+  it('an account only «На счёт» of a planned or a recurring transfer counts, so it cannot go', () => {
+    // «Вклад» is only «На счёт»: of «Копилка → вклад» (recurring) and of a planned transfer
+    const d = transfersScenario();
+    d.recurring = d.recurring.filter((r) => r.id !== 'r-vklad'); // «Из вклада»: Вклад is its «Со счёта»
+    d.operations = d.operations.filter((o) => o.id !== 'o-4'); // «Во вклад»
+    d.journal.push({ id: 'j-9', date: '2026-11-05', kind: 'transfer', what: 'Во вклад разово', plan: 100, status: 'paid', account: TR.card, toAccount: TR.deposit });
+    expect(accountUsage(d, TR.deposit)).toEqual({ operations: 0, journal: 1, recurring: 1, purchases: 0, credit: [], total: 2 });
+    expect(() => removeAccount(d, TR.deposit)).toThrow();
+    expect(accountBlockText(accountUsage(d, TR.deposit))).toBe(
+      'Счёт нельзя удалить. На нём: 1 плановая запись, 1 постоянный платёж — укажите в них другой счёт.',
+    );
+    // a row that is both ends counts once
+    d.journal.push({ id: 'j-10', date: '2026-11-06', kind: 'transfer', what: 'Сам себе', plan: 1, account: TR.deposit, toAccount: TR.deposit });
+    expect(accountUsage(d, TR.deposit).journal).toBe(2);
   });
 
   it('nothing for an unused account', () => {

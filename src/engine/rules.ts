@@ -2,6 +2,7 @@
 import { dateIn, inAccountingYear, monthDiff, monthEnd, monthStart, ymOf } from './dates';
 import type { Data, ISODate, JournalRow, Operation, Purchase, Recurring, Settings, YM } from './model';
 import { opt } from './opt';
+import { rowCheck } from './transfers';
 
 // ── Journal ─────────────────────────────────────────────────────────────
 /** Fact: the entered fact; otherwise the plan when paid; otherwise 0. */
@@ -96,15 +97,21 @@ function namedLikeRecurringOrPurchase(data: Data, what: string): DuplicateOf | n
   return null;
 }
 
-/** A journal row named like a recurring payment or a purchase. */
+/**
+ * A journal row named like a recurring payment or a purchase. A row with a check of its type and accounts (`rowCheck`)
+ * shows that check instead, as the tracker's «Дубль или проверка» does, and is not counted as a duplicate.
+ */
 export function duplicatesForJournal(data: Data, r: JournalRow): DuplicateOf | null {
-  if (r.what === '') return null;
+  if (r.what === '' || rowCheck(data, r) !== null) return null;
   return namedLikeRecurringOrPurchase(data, r.what);
 }
 
-/** An expense/income operation that repeats a journal row (same date and fact) or is named like a recurring payment or a purchase. */
+/**
+ * An expense/income operation that repeats a journal row (same date and fact) or is named like a recurring payment or a
+ * purchase; never a transfer, nor a row with a check (`rowCheck`), as in the tracker.
+ */
 export function duplicatesForOperation(data: Data, o: Operation): DuplicateOf | null {
-  if (o.kind === 'transfer' || o.what === '') return null;
+  if (o.kind === 'transfer' || o.what === '' || rowCheck(data, o) !== null) return null;
   const amount = opAmount(o);
   if (amount !== 0 && data.journal.some((r) => r.date === o.date && journalFact(r) === amount)) return 'journal';
   return namedLikeRecurringOrPurchase(data, o.what);
