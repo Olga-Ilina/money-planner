@@ -1,9 +1,10 @@
 // Page «Синхронизация» (registered as 'sync' in src/ui/pages.ts): the app and the Excel tracker on the Mac
 // through a folder in iCloud Drive (spec .internal/specs/2026-10-01-icloud-sync.md; the shared logic is
 // src/ui/sync.ts). The status (the last sync, unsent changes), «Отправить на Mac» (the full backup with a
-// stamp through the share sheet), «Забрать с Mac» (the picked «Для приложения.xlsx»: checked by its stamp,
-// a warning before unsent changes would go, then the usual import preview; the data set it replaces is kept)
-// and «Вернуть данные до синхронизации».
+// stamp through the share sheet), «Забрать с Mac» (the picked «Для приложения.xlsx»: checked by its stamp;
+// unsent changes → «Сначала отправьте свои изменения на Mac» with «Отправить на Mac» (the Mac merges both
+// sides), a Mac version built on the last send with nothing changed since → the usual import preview; the data
+// set it replaces is kept) and «Вернуть данные до синхронизации».
 import './SyncPage.css';
 import { useEffect, useState } from 'preact/hooks';
 import { actions } from '../actions';
@@ -42,13 +43,18 @@ const WARN_TITLE: Record<Warn, string> = {
   'not-seen': 'Изменения ещё не на Mac',
 };
 
+// The Mac merges both sides itself (spec 2026-10-04-auto-merge), except when the category or account lists, the
+// start of accounting or the balances date were changed on either side, or merging fails: then it asks which
+// version to keep and shows a notice (spec, «Дополнение 14:35»), so no text here promises a merge that never asks.
+// What the app holds and has not sent is never replaced by a Mac file without a word: the guard says «send first»,
+// the way forward being the one filled button; replacing anyway stays an explicit, destructive second choice (the
+// data set it replaces is kept).
+const SEND_FIRST = 'Сначала отправьте свои изменения на Mac — он объединит их с правками в Excel.';
 const WARN_TEXT: Record<Warn, string> = {
-  unsent:
-    'В приложении есть изменения после последней синхронизации, которых нет на Mac. Если заменить данные файлом с Mac, они пропадут из приложения. Сначала отправьте их на Mac.',
-  'never-sent':
-    'Данные из приложения ещё ни разу не отправлялись на Mac. Если заменить их файлом с Mac, всё, что есть только в приложении, пропадёт из него. Сначала отправьте их на Mac.',
+  unsent: `${SEND_FIRST} Если заменить данные файлом с Mac, изменения из приложения пропадут.`,
+  'never-sent': `Данные из приложения ещё ни разу не отправлялись на Mac. ${SEND_FIRST} Если заменить их файлом с Mac, всё, что есть только в приложении, пропадёт.`,
   'not-seen':
-    'Последняя отправка из приложения ещё не попала в трекер на Mac: этот файл сделан без неё. Если заменить данные, изменения из неё пропадут из приложения. Если Mac выключен, включите его и заберите файл позже.',
+    'Последняя отправка из приложения ещё не попала в трекер на Mac: этот файл сделан без неё. Mac объединит её с правками в Excel сам, а если не сможет — спросит, какую версию оставить. Включите его и заберите файл позже. Если заменить данные сейчас, изменения из неё пропадут из приложения.',
 };
 
 const FROM_APP = `Это файл, отправленный из приложения. Выберите «${FROM_MAC_FILE}».`;
@@ -191,12 +197,17 @@ export function SyncPage(_props: RoutedPageProps) {
         <Row
           icon="info"
           title="На Mac"
-          subtitle="Mac сам переносит файл из приложения в трекер, когда трекер закрыт, и перед этим делает резервную копию трекера. Если трекер изменился на Mac, в папке появляется «Для приложения.xlsx»."
+          subtitle="Mac сам объединяет правки из приложения и из Excel: добавленное, изменённое и удалённое с обеих сторон. Он делает это, когда трекер закрыт, и перед этим сохраняет резервную копию трекера. Если трекер изменился на Mac, в папке появляется «Для приложения.xlsx». Если на одной из сторон менялись списки категорий или счетов, начало учёта или дата остатков либо объединить не получилось, Mac не объединяет сам — он спросит, какую версию оставить, и покажет уведомление."
+        />
+        <Row
+          icon="info"
+          title="На телефоне"
+          subtitle="Два касания остаются: «Отправить на Mac» и «Забрать с Mac». Сначала отправьте свои изменения — Mac объединит их с правками в Excel, потом заберите результат."
         />
         <Row
           icon="warning"
           title="Mac должен быть включён"
-          subtitle="И подключён к iCloud. Если данные менялись и в приложении, и на Mac, Mac спросит, какую версию оставить."
+          subtitle="И подключён к iCloud, иначе файлы между ним и приложением не передаются."
         />
       </Section>
 
@@ -214,7 +225,6 @@ export function SyncPage(_props: RoutedPageProps) {
         <div class="sheet-actions">
           {warning && warning.warn !== 'not-seen' && (
             <Button
-              kind="plain"
               full
               disabled={sending.value}
               onClick={() => {
@@ -222,7 +232,7 @@ export function SyncPage(_props: RoutedPageProps) {
                 void sendToMac(); // straight from the tap
               }}
             >
-              Сначала отправить на Mac
+              Отправить на Mac
             </Button>
           )}
           <Button

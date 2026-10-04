@@ -458,10 +458,22 @@ service on the Mac does its half. No network: files go out through `shareFile` a
   it as older), `from=app`, in the full backup `Из приложения.xlsx` → `shareFile`; 'shared' / 'downloaded' → `setSync`
   (this id, this data's hash, `sentDirty` when dirty); 'cancelled' → nothing. `sending` is true meanwhile.
 - **«Забрать с Mac»** (`classifyPickUp`): no stamp → the usual tracker import; `from=app` → «выберите «Для
-  приложения.xlsx»»; `id == lastId` → «Нового нет» (and `resolveSentDirty`); a Mac version → a warning first when the app holds unsent changes
-  («Сначала отправить на Mac» / «Всё равно заменить») or when its last version was sent with changes and this file is
-  not built on it (`base ≠ lastId`); then the usual preview (`ReplaceDataSheet`) and `replaceKeepingBefore(next)`;
-  after it `setSync` (the file's id, the new data's hash).
+  приложения.xlsx»»; `id == lastId` → «Нового нет» (and `resolveSentDirty`); a Mac version → the usual preview
+  (`ReplaceDataSheet`) and `replaceKeepingBefore(next)` **only when the app holds nothing the Mac has not seen**; after
+  it `setSync` (the file's id, the new data's hash). The Mac merges both sides itself (spec
+  `.internal/specs/2026-10-04-auto-merge.md`) — except when the category or account lists, the start of accounting or
+  the balances date changed on either side, or merging fails: then it asks which version to keep and shows a notice
+  (spec, «Дополнение 14:35»). So unsent changes are never replaced without a word. A guard sheet comes
+  first: the app holds unsent changes (or has never sent) → «Изменения не отправлены»: «Сначала отправьте свои изменения
+  на Mac — он объединит их с правками в Excel.» with the filled **«Отправить на Mac»** (`sendToMac()`, from the tap;
+  nothing is replaced) and, second, the destructive «Всё равно заменить» (an explicit choice, goes on to the preview; the
+  first load of a tracker into a never-synced app needs it); or the last version was sent with changes and this file
+  is not built on it (`base ≠ lastId`, `sentDirty`) → «Изменения ещё не на Mac» (already sent: no send button; the Mac
+  merges it or asks, take the file later). A Mac version with `base == lastId` and no changes since that send (hash =
+  `syncedHash`) has no guard and replaces as before. The page's «Как это работает» says the Mac merges additions, edits
+  and deletions on both sides, that it asks which version to keep (with a notice) when the category or account lists,
+  the start of accounting or the balances date changed on either side or merging fails, and that the two taps stay on
+  the phone.
 - **«Загрузить трекер» and the onboarding import** read with `readTrackerStamped(buf)`: the tracker plus `mac` (the
   version of a `from=mac` stamp and the hash of the data read). After the replace `setSyncFromImport(mac)` sets the sync
   state as «Забрать с Mac» does (no false conflict on the next send); it never rejects (a failed save: a toast). A stamp

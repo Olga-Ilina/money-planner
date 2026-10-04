@@ -152,6 +152,36 @@ describe('«Синхронизация» — status', () => {
     expect(screen.getByText(/Mac должен быть включён/)).toBeTruthy();
     expect(screen.getByText(/резервную копию трекера/)).toBeTruthy();
   });
+
+  it('auto-merge (spec 2026-10-04-auto-merge): the Mac merges both sides itself; the two taps stay on the phone', () => {
+    renderPage();
+    const how = screen.getByText('Как это работает').closest('section') ?? document.body;
+    const text = how.textContent ?? '';
+    // the Mac merges what was added, changed and deleted on both sides
+    expect(text).toMatch(/Mac сам объединяет правки из приложения и из Excel/);
+    expect(text).toMatch(/добавленное, изменённое и удалённое/);
+    // on the phone the two taps stay: first send, then take
+    expect(within(how as HTMLElement).getByText('На телефоне')).toBeTruthy();
+    expect(text).toMatch(/Два касания остаются: «Отправить на Mac» и «Забрать с Mac»/);
+    expect(text).toMatch(/Сначала отправьте свои изменения — Mac объединит их с правками в Excel, потом заберите результат/);
+    // the exceptions (spec, «Дополнение 14:35»): lists of categories or accounts, the start of accounting, the
+    // balances date, a failed merge → the Mac asks which version to keep and shows a notice
+    expect(text).toMatch(
+      /Если на одной из сторон менялись списки категорий или счетов, начало учёта или дата остатков либо объединить не получилось, Mac не объединяет сам — он спросит, какую версию оставить, и покажет уведомление/,
+    );
+  });
+
+  it('no text promises a merge that never asks: the guards say what the Mac does, and when it asks', async () => {
+    await synced({ sentDirty: true });
+    renderPage();
+    // the page itself: the merge is not «always»
+    expect(document.body.textContent).not.toMatch(/всегда|никогда|без вопросов|без уведомлени/i);
+    // «Изменения ещё не на Mac»: merges it, or asks which version to keep
+    await pickUp(await fileWith(formatStamp(macStamp({ base: 'bbbbbbbbbbbbbbbb' }))));
+    const warning = await screen.findByRole('dialog', { name: 'Изменения ещё не на Mac' });
+    expect(within(warning).getByText(/Mac объединит её с правками в Excel сам, а если не сможет — спросит, какую версию оставить/)).toBeTruthy();
+    expect(warning.textContent).not.toMatch(/всегда|никогда/i);
+  });
 });
 
 describe('«Отправить на Mac»', () => {
@@ -311,6 +341,7 @@ describe('«Забрать с Mac»', () => {
     renderPage();
     await pickUp(await fileWith(formatStamp(macStamp())));
     const sheet = await screen.findByRole('dialog', { name: 'Заменить данные в приложении' });
+    expect(screen.queryByRole('dialog', { name: /^Изменения/ })).toBeNull(); // base = the last send, no changes since: no guard
     expect(within(sheet).getByText(/Прежние данные сохранятся/)).toBeTruthy();
     expect(data.value).toEqual(scenario()); // nothing changed before the choice
     fireEvent.click(within(sheet).getByRole('button', { name: 'Заменить данные в приложении' }));
@@ -329,20 +360,51 @@ describe('«Забрать с Mac»', () => {
     expect(await screen.findByText('Всё отправлено')).toBeTruthy();
   });
 
-  it('unsent changes: an explicit warning first; «Всё равно заменить» goes on to the preview', async () => {
+  it('unsent changes: the guard «Сначала отправьте…» with a primary «Отправить на Mac»; nothing is replaced, nothing is read', async () => {
     await synced({}, { ...scenario(), operations: [] });
     renderPage();
     await pickUp(await fileWith(formatStamp(macStamp())));
     const warning = await screen.findByRole('dialog', { name: 'Изменения не отправлены' });
-    expect(within(warning).getByText(/изменения после последней синхронизации.*пропадут.*Сначала отправьте их на Mac/)).toBeTruthy();
-    expect(within(warning).getByRole('button', { name: 'Сначала отправить на Mac' })).toBeTruthy();
+    expect(within(warning).getByText(/Сначала отправьте свои изменения на Mac — он объединит их с правками в Excel/)).toBeTruthy();
+    expect(within(warning).getByText(/Если заменить данные файлом с Mac, изменения из приложения пропадут/)).toBeTruthy();
+    // the one filled button is the way forward; replacing anyway is an explicit, destructive second choice
+    expect(within(warning).getByRole('button', { name: 'Отправить на Mac' }).className).toContain('btn-filled');
+    expect(within(warning).getByRole('button', { name: 'Всё равно заменить' }).className).toContain('btn-destructive');
+    expect(within(warning).queryByRole('button', { name: 'Сначала отправить на Mac' })).toBeNull();
     expect(screen.queryByRole('dialog', { name: 'Заменить данные в приложении' })).toBeNull();
+    expect(data.value).toEqual(scenario());
+    expect(share.shareFile).not.toHaveBeenCalled();
+  });
+
+  it('unsent changes: «Всё равно заменить» is the explicit choice that goes on to the preview', async () => {
+    await synced({}, { ...scenario(), operations: [] });
+    renderPage();
+    await pickUp(await fileWith(formatStamp(macStamp())));
+    const warning = await screen.findByRole('dialog', { name: 'Изменения не отправлены' });
     fireEvent.click(within(warning).getByRole('button', { name: 'Всё равно заменить' }));
     const sheet = await screen.findByRole('dialog', { name: 'Заменить данные в приложении' });
+    expect(data.value).toEqual(scenario()); // still nothing replaced
     fireEvent.click(within(sheet).getByRole('button', { name: 'Заменить данные в приложении' }));
     await waitFor(() => expect(data.value).toBe(imported));
     await actions.flush();
     expect(appMeta.value.sync?.lastId).toBe(MAC_ID);
+  });
+
+  it('the app changed after the last send, and the Mac file is built on that send (base = lastId): still the guard', async () => {
+    await synced({ sentDirty: true }, { ...scenario(), operations: [] }); // sent SENT_ID, edited since
+    renderPage();
+    await pickUp(await fileWith(formatStamp(macStamp({ base: SENT_ID }))));
+    expect(await screen.findByRole('dialog', { name: 'Изменения не отправлены' })).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Заменить данные в приложении' })).toBeNull();
+    expect(data.value).toEqual(scenario());
+  });
+
+  it('the app changed after a Mac version was taken and the Mac made the next one (base = that version): the guard', async () => {
+    await synced({ lastId: MAC_ID }, { ...scenario(), operations: [] });
+    renderPage();
+    await pickUp(await fileWith(formatStamp(macStamp({ id: 'bbbbbbbbbbbbbbbb', base: MAC_ID }))));
+    expect(await screen.findByRole('dialog', { name: 'Изменения не отправлены' })).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Заменить данные в приложении' })).toBeNull();
   });
 
   it('never synced: the warning says the data have never been sent', async () => {
@@ -350,20 +412,34 @@ describe('«Забрать с Mac»', () => {
     await pickUp(await fileWith(formatStamp(macStamp({ base: null }))));
     const warning = await screen.findByRole('dialog', { name: 'Изменения не отправлены' });
     expect(within(warning).getByText(/ещё ни разу не отправлялись на Mac/)).toBeTruthy();
+    expect(within(warning).getByText(/Сначала отправьте свои изменения на Mac — он объединит их с правками в Excel/)).toBeTruthy();
+    expect(within(warning).getByRole('button', { name: 'Отправить на Mac' }).className).toContain('btn-filled');
   });
 
-  it('unsent changes, «Сначала отправить на Mac»: sends, replaces nothing', async () => {
+  it('unsent changes, «Отправить на Mac» in the guard: sends, replaces nothing; the merged Mac version built on that send then replaces', async () => {
     await synced({}, { ...scenario(), operations: [] });
     renderPage();
     await pickUp(await fileWith(formatStamp(macStamp())));
     const warning = await screen.findByRole('dialog', { name: 'Изменения не отправлены' });
-    fireEvent.click(within(warning).getByRole('button', { name: 'Сначала отправить на Mac' }));
+    fireEvent.click(within(warning).getByRole('button', { name: 'Отправить на Mac' }));
     await waitFor(() => expect(share.shareFile).toHaveBeenCalledWith('Из приложения.xlsx', expect.anything()), { timeout: 10_000 });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(data.value).toEqual(scenario());
     await actions.flush();
     expect(await db.loadBeforeSync({ generation: 'g1' })).toBeNull();
-  }, 20_000);
+    const sent = (await readStamp(vi.mocked(share.shareFile).mock.calls[0]![1] as ArrayBuffer))!;
+    expect(sent).toMatchObject({ base: SENT_ID, dirty: true, from: 'app' });
+    expect(appMeta.value.sync).toMatchObject({ lastId: sent.id, sentDirty: true });
+    await waitFor(() => expect((sendButton() as HTMLButtonElement).disabled).toBe(false), { timeout: 10_000 });
+    // the Mac merged it and publishes the result, built on this send: no unsent changes, so it replaces as before
+    await pickUp(await fileWith(formatStamp(macStamp({ id: 'cccccccccccccccc', base: sent.id }))));
+    const sheet = await screen.findByRole('dialog', { name: 'Заменить данные в приложении' });
+    expect(screen.queryByRole('dialog', { name: /^Изменения/ })).toBeNull();
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Заменить данные в приложении' }));
+    await waitFor(() => expect(data.value).toBe(imported));
+    await actions.flush();
+    expect(appMeta.value.sync).toEqual({ lastId: 'cccccccccccccccc', lastAt: expect.any(String), syncedHash: await dataHash(imported) });
+  }, 30_000);
 
   it('the last version was sent with changes and this file is not built on it: warns that they would go', async () => {
     await synced({ sentDirty: true });
@@ -371,7 +447,9 @@ describe('«Забрать с Mac»', () => {
     await pickUp(await fileWith(formatStamp(macStamp({ base: 'bbbbbbbbbbbbbbbb' }))));
     const warning = await screen.findByRole('dialog', { name: 'Изменения ещё не на Mac' });
     expect(within(warning).getByText(/Последняя отправка из приложения ещё не попала в трекер на Mac/)).toBeTruthy();
-    expect(within(warning).queryByRole('button', { name: 'Сначала отправить на Mac' })).toBeNull();
+    expect(within(warning).getByText(/Mac объединит её с правками в Excel сам/)).toBeTruthy();
+    // already sent: nothing to send again
+    expect(within(warning).queryByRole('button', { name: 'Отправить на Mac' })).toBeNull();
     expect(within(warning).getByRole('button', { name: 'Всё равно заменить' })).toBeTruthy();
   });
 
@@ -380,6 +458,7 @@ describe('«Забрать с Mac»', () => {
     renderPage();
     await pickUp(await fileWith(formatStamp(macStamp({ base: SENT_ID }))));
     const sheet = await screen.findByRole('dialog', { name: 'Заменить данные в приложении' });
+    expect(screen.queryByRole('dialog', { name: /^Изменения/ })).toBeNull(); // base = the last send, nothing changed since: no guard
     fireEvent.click(within(sheet).getByRole('button', { name: 'Заменить данные в приложении' }));
     expect(await screen.findByText('Данные с Mac загружены')).toBeTruthy();
     await actions.flush();
